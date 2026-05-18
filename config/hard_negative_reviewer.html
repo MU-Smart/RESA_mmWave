@@ -1,0 +1,2077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hard Negative Reviewer — mmWave Nav Pipeline</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:     #1a1b1e;
+  --bg2:    #25262b;
+  --bg3:    #2c2e33;
+  --bg4:    #373a40;
+  --border: #373a40;
+  --text:   #c1c2c5;
+  --dim:    #6e7278;
+  --bright: #e8eaed;
+  --accent: #228be6;
+  --accentd:#1c7ed6;
+  --red:    #fa5252;
+  --orange: #fd7e14;
+  --yellow: #ffd43b;
+  --green:  #40c057;
+  --purple: #9c36b5;
+}
+
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 13px; height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+
+/* ── Import screen ─────────────────────────────────────────── */
+#import-screen {
+  flex: 1; display: flex; align-items: center;
+  justify-content: center; padding: 24px;
+}
+
+.icard {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 28px; max-width: 580px; width: 100%;
+}
+
+.icard h1 { font-size: 18px; color: var(--bright); margin-bottom: 4px; }
+
+.icard > p {
+  color: var(--dim); font-size: 12px; line-height: 1.5; margin-bottom: 20px;
+}
+
+.istep {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+}
+
+.istep h3 {
+  font-size: 12px; font-weight: 700; color: var(--bright);
+  margin-bottom: 4px; display: flex; align-items: center; gap: 8px;
+}
+
+.step-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; background: var(--accent); color: #fff;
+  border-radius: 50%; font-size: 10px; font-weight: 700; flex-shrink: 0;
+}
+.step-num.opt { background: transparent; border: 1px solid var(--border); color: var(--dim); }
+
+.istep p { font-size: 11px; color: var(--dim); margin-bottom: 8px; line-height: 1.4; }
+
+.ibtn-row { display: flex; gap: 7px; flex-wrap: wrap; }
+
+.fbtn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 11px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 5px; cursor: pointer; font-size: 11px; color: var(--text);
+  transition: border-color .12s, color .12s;
+}
+.fbtn:hover { border-color: var(--accent); color: var(--bright); }
+.fbtn.ok { border-color: var(--green); color: var(--green); }
+
+input[type="file"] { display: none; }
+
+.istatus {
+  font-size: 11px; margin-top: 6px; padding: 4px 9px; border-radius: 4px; display: none;
+}
+.istatus.ok  { background: rgba(64,192,87,.1);  color: var(--green); border: 1px solid rgba(64,192,87,.3); }
+.istatus.err { background: rgba(250,82,82,.1);  color: var(--red);   border: 1px solid rgba(250,82,82,.3); }
+.istatus.inf { background: rgba(34,139,230,.1); color: var(--accent);border: 1px solid rgba(34,139,230,.3); }
+
+.start-btn {
+  width: 100%; padding: 10px; background: var(--accent); color: #fff;
+  border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
+  font-weight: 600; margin-top: 14px; transition: background .1s;
+}
+.start-btn:hover { background: var(--accentd); }
+.start-btn:disabled { opacity: .38; cursor: not-allowed; }
+
+.ifoot { margin-top: 10px; font-size: 10px; color: var(--dim); text-align: center; }
+.ifoot a { color: var(--dim); cursor: pointer; text-decoration: underline; }
+
+/* ── Review screen ─────────────────────────────────────────── */
+#review-screen { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+#toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 14px; background: var(--bg2);
+  border-bottom: 1px solid var(--border); flex-shrink: 0; height: 44px;
+}
+
+#toolbar h1 { font-size: 13px; font-weight: 700; color: var(--bright); white-space: nowrap; }
+
+.tb-sep { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+
+#progress-badge { font-size: 11px; color: var(--dim); white-space: nowrap; }
+
+.tb-spacer { flex: 1; }
+
+.tb-btn {
+  padding: 4px 9px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg3); color: var(--text); cursor: pointer; font-size: 11px;
+  white-space: nowrap; transition: border-color .1s;
+}
+.tb-btn:hover { border-color: var(--accent); color: var(--bright); }
+
+#panels { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Left pane ─────────────────────────────────────────────── */
+#left-pane {
+  width: 248px; flex-shrink: 0; border-right: 1px solid var(--border);
+  background: var(--bg2); display: flex; flex-direction: column; overflow: hidden;
+}
+
+.pane-hdr {
+  padding: 7px 11px; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+
+#session-list { overflow-y: auto; flex: 1; min-height: 0; }
+
+.sitem {
+  padding: 7px 11px; cursor: pointer; border-left: 2px solid transparent;
+  transition: background .1s;
+}
+.sitem:hover { background: var(--bg3); }
+.sitem.active { background: var(--bg3); border-left-color: var(--accent); }
+
+.sitem-name {
+  font-size: 11px; color: var(--bright); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+
+.sitem-meta {
+  display: flex; justify-content: space-between;
+  margin-top: 3px; font-size: 10px; color: var(--dim);
+}
+
+.sitem-bar { height: 2px; background: var(--bg); border-radius: 1px; margin-top: 4px; }
+.sitem-bar-fill { height: 100%; background: var(--green); border-radius: 1px; }
+
+#filter-section {
+  border-top: 1px solid var(--border); padding: 9px 11px;
+  flex-shrink: 0; display: flex; flex-direction: column; gap: 7px;
+}
+
+.flabel { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+
+select {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); padding: 4px 6px; border-radius: 4px; font-size: 11px; outline: none;
+}
+select:focus { border-color: var(--accent); }
+
+.score-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.score-row input[type=range] { flex: 1; accent-color: var(--accent); }
+#score-val { min-width: 24px; text-align: right; color: var(--bright); font-weight: 600; }
+
+/* ── Center pane ───────────────────────────────────────────── */
+#center-pane {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+}
+
+#image-area {
+  flex: 1; min-height: 0; background: #0f1012;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+}
+
+#frame-img { max-width: 100%; max-height: 100%; object-fit: contain; display: none; }
+
+#img-placeholder {
+  text-align: center; color: var(--dim); font-size: 12px; line-height: 1.8;
+}
+
+#img-badge {
+  position: absolute; top: 7px; left: 7px; background: rgba(0,0,0,.7);
+  color: var(--bright); padding: 2px 8px; border-radius: 3px; font-size: 10px;
+  pointer-events: none;
+}
+
+#img-review-badge {
+  position: absolute; top: 7px; right: 7px;
+  padding: 2px 9px; border-radius: 3px; font-size: 10px;
+  font-weight: 700; pointer-events: none; display: none;
+}
+
+#ctx-strip {
+  flex-shrink: 0; background: var(--bg2); border-top: 1px solid var(--border);
+  padding: 7px 8px; display: flex; gap: 7px; overflow-x: auto; min-height: 86px; max-height: 86px;
+}
+
+.ctx-card {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 9px; min-width: 155px; max-width: 200px; flex-shrink: 0;
+}
+
+.ctx-title {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--dim); margin-bottom: 5px;
+}
+
+.ctx-row { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px; }
+.ctx-k { color: var(--dim); }
+.ctx-v { color: var(--bright); font-weight: 500; }
+.ctx-v.ok  { color: var(--green); }
+.ctx-v.warn{ color: var(--orange); }
+.ctx-v.bad { color: var(--red); }
+
+#table-wrap {
+  flex-shrink: 0; height: 188px; overflow-y: auto;
+  border-top: 1px solid var(--border); background: var(--bg);
+}
+
+#ftable { width: 100%; border-collapse: collapse; font-size: 11px; }
+
+#ftable thead th {
+  position: sticky; top: 0; background: var(--bg2); padding: 5px 8px;
+  text-align: left; font-weight: 600; color: var(--dim);
+  border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
+  white-space: nowrap;
+}
+#ftable thead th:hover { color: var(--bright); }
+#ftable thead th.sorted { color: var(--accent); }
+#ftable thead th .sor { margin-left: 3px; opacity: .6; }
+
+#ftable tbody tr { cursor: pointer; border-bottom: 1px solid rgba(55,58,64,.5); }
+#ftable tbody tr:hover { background: var(--bg3); }
+#ftable tbody tr.sel { background: rgba(34,139,230,.12); }
+#ftable tbody td { padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+
+/* ── Right pane ────────────────────────────────────────────── */
+#right-pane {
+  width: 296px; flex-shrink: 0; border-left: 1px solid var(--border);
+  background: var(--bg2); display: flex; flex-direction: column; overflow-y: auto;
+}
+
+.rsec { padding: 11px 12px; border-bottom: 1px solid var(--border); }
+.rsec-title {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--dim); margin-bottom: 9px;
+}
+
+.fi { font-size: 10px; color: var(--dim); margin-bottom: 2px; }
+.fi strong { color: var(--bright); }
+
+.tag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+
+.tbtn {
+  padding: 6px 7px; border: 1px solid var(--border); border-radius: 5px;
+  cursor: pointer; font-size: 10px; font-weight: 700; text-align: left;
+  background: var(--bg3); color: var(--text); transition: filter .1s;
+  position: relative; line-height: 1.25;
+}
+.tbtn:hover { filter: brightness(1.25); }
+.tbtn .kbd {
+  position: absolute; top: 3px; right: 4px; font-size: 9px;
+  background: rgba(255,255,255,.13); border-radius: 2px; padding: 0 3px; color: var(--dim);
+}
+.tbtn.act { color: #fff; border-color: transparent; }
+.tbtn[data-tag="human_overcall"].act    { background: var(--red); }
+.tbtn[data-tag="true_human"].act        { background: var(--green); }
+.tbtn[data-tag="structure_mislabel"].act{ background: var(--accent); }
+.tbtn[data-tag="floor_mislabel"].act    { background: var(--orange); }
+.tbtn[data-tag="uncertain"].act         { background: #6e7278; }
+.tbtn[data-tag="skip"].act              { background: #444; }
+
+.lbl-row, .conf-row { display: flex; gap: 5px; margin-top: 8px; }
+
+.lblbtn, .confbtn {
+  flex: 1; padding: 5px 3px; border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; font-size: 10px; font-weight: 600; text-align: center;
+  background: var(--bg3); color: var(--dim); transition: all .1s; text-transform: uppercase;
+}
+.lblbtn:hover, .confbtn:hover { color: var(--bright); border-color: var(--dim); }
+.lblbtn.act { border-color: var(--accent); color: var(--bright); background: rgba(34,139,230,.15); }
+.confbtn.act { border-color: var(--yellow); color: var(--yellow); background: rgba(255,212,59,.1); }
+
+.accbtn {
+  flex: 1; padding: 5px 3px; border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; font-size: 10px; font-weight: 600; text-align: center;
+  background: var(--bg3); color: var(--dim); transition: all .1s; text-transform: uppercase;
+}
+.accbtn:hover { color: var(--bright); border-color: var(--dim); }
+.accbtn.act { border-color: transparent; color: #fff; }
+.accbtn[data-acc="yes"].act       { background: var(--green); }
+.accbtn[data-acc="no"].act        { background: var(--red); }
+.accbtn[data-acc="uncertain"].act { background: #6e7278; }
+
+.rtbtn {
+  padding: 4px 3px; border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; font-size: 9px; font-weight: 600; text-align: center;
+  background: var(--bg3); color: var(--dim); transition: all .1s; text-transform: uppercase;
+}
+.rtbtn:hover { color: var(--bright); border-color: var(--dim); }
+.rtbtn.act { border-color: transparent; color: #fff; }
+.rtbtn[data-rt="direct"].act             { background: var(--green); }
+.rtbtn[data-rt="rig_scatter"].act        { background: var(--purple); }
+.rtbtn[data-rt="wheel_microdoppler"].act { background: var(--accent); }
+.rtbtn[data-rt="wall_multipath"].act     { background: var(--orange); }
+.rtbtn[data-rt="floor_bounce"].act       { background: var(--yellow); color: #111; }
+.rtbtn[data-rt="unknown"].act            { background: #6e7278; }
+
+.rsbtn {
+  padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; font-size: 9px; font-weight: 600; text-align: center;
+  background: var(--bg3); color: var(--dim); transition: all .1s; text-transform: uppercase;
+}
+.rsbtn:hover { color: var(--bright); border-color: var(--dim); }
+.rsbtn.act { border-color: var(--accent); color: var(--bright); background: rgba(34,139,230,.15); }
+
+.span-section { margin-top: 9px; }
+.span-label { font-size: 10px; color: var(--dim); margin-bottom: 5px; display: flex; align-items: center; gap: 6px; }
+
+.span-inputs { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.span-inputs input {
+  width: 70px; background: var(--bg); border: 1px solid var(--border);
+  color: var(--bright); padding: 3px 6px; border-radius: 4px; font-size: 11px;
+}
+.span-inputs input:focus { outline: none; border-color: var(--accent); }
+
+.span-btn {
+  font-size: 10px; padding: 4px 8px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 4px; cursor: pointer; color: var(--text); transition: border-color .1s;
+}
+.span-btn:hover { border-color: var(--accent); color: var(--bright); }
+
+textarea#notes {
+  width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 6px; border-radius: 4px; font-size: 11px; resize: vertical; min-height: 46px;
+  font-family: inherit; margin-top: 8px;
+}
+textarea#notes:focus { outline: none; border-color: var(--accent); }
+
+.apply-btn {
+  width: 100%; padding: 8px; background: var(--accent); color: #fff;
+  border: none; border-radius: 5px; cursor: pointer; font-size: 12px;
+  font-weight: 700; margin-top: 8px; transition: background .1s;
+}
+.apply-btn:hover { background: var(--accentd); }
+.apply-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+.kbd-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 8px;
+  font-size: 10px; color: var(--dim);
+}
+.kbd-grid kbd {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 3px; padding: 0 4px; font-size: 9px; color: var(--text); font-family: monospace;
+}
+
+.exp-btn {
+  display: block; width: 100%; padding: 7px; background: var(--bg3);
+  border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+  font-size: 11px; font-weight: 500; color: var(--bright); margin-bottom: 5px;
+  transition: border-color .1s; text-align: left;
+}
+.exp-btn:hover { border-color: var(--accent); }
+.exp-btn:last-child { margin-bottom: 0; }
+
+.danger-btn {
+  display: block; width: 100%; padding: 5px; background: transparent;
+  border: 1px solid rgba(250,82,82,.3); border-radius: 4px; cursor: pointer;
+  font-size: 10px; color: var(--red); margin-top: 6px; transition: border-color .1s;
+}
+.danger-btn:hover { border-color: var(--red); }
+
+/* ── Badges / pills ────────────────────────────────────────── */
+.score-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 11px; font-weight: 700;
+}
+.sh { background: rgba(250,82,82,.18); color: #fa5252; }
+.sm { background: rgba(253,126,20,.18); color: #fd7e14; }
+.sl { background: rgba(255,212,59,.18); color: #ffd43b; }
+.sn { background: rgba(110,114,120,.18); color: #868e96; }
+
+.tag-pill {
+  display: inline-block; padding: 1px 6px; border-radius: 10px;
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+}
+.tp-human_overcall     { background: rgba(250,82,82,.2); color: #fa5252; }
+.tp-true_human         { background: rgba(64,192,87,.2); color: #40c057; }
+.tp-structure_mislabel { background: rgba(34,139,230,.2); color: #228be6; }
+.tp-floor_mislabel     { background: rgba(253,126,20,.2); color: #fd7e14; }
+.tp-uncertain          { background: rgba(110,114,120,.2); color: #868e96; }
+.tp-skip               { background: rgba(55,58,64,.5); color: #555; }
+
+.type-pill {
+  display: inline-block; padding: 1px 5px; border-radius: 3px;
+  font-size: 9px; font-weight: 600;
+}
+.type-ego_disagreement   { background: rgba(156,54,181,.2); color: #9c36b5; }
+.type-human_trigger      { background: rgba(250,82,82,.2);  color: #fa5252; }
+.type-dense_human_cluster{ background: rgba(253,126,20,.2); color: #fd7e14; }
+.type-review             { background: rgba(110,114,120,.2);color: #868e96; }
+
+/* ── LLM suggestion banner ─────────────────────────────────── */
+#llm-banner {
+  background: rgba(156,54,181,.08); border: 1px solid rgba(156,54,181,.3);
+  border-radius: 6px; padding: 8px 10px; margin-bottom: 0;
+}
+#llm-banner .llm-hdr {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .07em; color: #9c36b5; margin-bottom: 6px;
+  display: flex; align-items: center; gap: 6px;
+}
+#llm-banner .llm-hdr .llm-model {
+  font-weight: 400; color: var(--dim); text-transform: none; letter-spacing: 0;
+}
+.llm-row { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px; }
+.llm-k { color: var(--dim); }
+.llm-v { color: var(--bright); font-weight: 500; }
+.llm-v.llm-no  { color: var(--red); }
+.llm-v.llm-yes { color: var(--green); }
+.llm-v.llm-unc { color: var(--dim); }
+.llm-notes { font-size: 10px; color: var(--dim); margin-top: 4px; font-style: italic; line-height: 1.4; }
+.llm-accept-btn {
+  margin-top: 7px; width: 100%; padding: 5px; background: rgba(156,54,181,.15);
+  border: 1px solid rgba(156,54,181,.4); border-radius: 4px; cursor: pointer;
+  font-size: 10px; color: #9c36b5; font-weight: 600; transition: background .1s;
+}
+.llm-accept-btn:hover { background: rgba(156,54,181,.3); }
+.llm-source-pill {
+  display: inline-block; padding: 0px 5px; border-radius: 8px; font-size: 9px;
+  font-weight: 700; background: rgba(156,54,181,.2); color: #9c36b5;
+}
+.llm-confirmed-pill {
+  display: inline-block; padding: 0px 5px; border-radius: 8px; font-size: 9px;
+  font-weight: 700; background: rgba(64,192,87,.2); color: #40c057;
+}
+
+/* ── Utilities ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+
+.hidden { display: none !important; }
+.empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ IMPORT SCREEN ═══════════════════════ -->
+<div id="import-screen">
+<div class="icard">
+  <h1>Hard Negative Reviewer</h1>
+  <p>Frame-level annotation tool for mining false-positive humans from mmWave replay artifacts.
+     Exports corrected per-frame labels for KPConv retraining.</p>
+
+  <!-- Path A: folder load -->
+  <div class="istep">
+    <h3><span class="step-num">A</span> Load session folder (recommended)</h3>
+    <p>Select the <code>debug_frame_samples</code> directory. App scans for all
+       <code>debug_frames.json</code> manifests and PNG images automatically.</p>
+    <label class="fbtn" id="btn-folder">
+      📁 Select folder…
+      <input type="file" id="inp-folder" webkitdirectory multiple>
+    </label>
+    <div class="istatus" id="st-folder"></div>
+  </div>
+
+  <!-- Path B: mining JSON + images -->
+  <div class="istep">
+    <h3><span class="step-num">B</span> Load mining JSON + images</h3>
+    <p>Select <code>hard_negative_candidates.json</code> (from
+       <code>3branch_hard_negative_mining.py</code>), then select the images folder separately.</p>
+    <div class="ibtn-row">
+      <label class="fbtn" id="btn-mining">
+        📄 Candidates JSON…
+        <input type="file" id="inp-mining" accept=".json">
+      </label>
+      <label class="fbtn" id="btn-images">
+        🖼 Images folder…
+        <input type="file" id="inp-images" webkitdirectory multiple>
+      </label>
+    </div>
+    <div class="istatus" id="st-mining"></div>
+  </div>
+
+  <!-- Optional: resume -->
+  <div class="istep">
+    <h3><span class="step-num opt">C</span> Resume prior review (optional)</h3>
+    <p>Load a previously exported review JSON to merge annotations with the current import.</p>
+    <label class="fbtn" id="btn-resume">
+      ↩ Resume from export…
+      <input type="file" id="inp-resume" accept=".json">
+    </label>
+    <div class="istatus" id="st-resume"></div>
+  </div>
+
+  <!-- Optional: LLM auto-labels -->
+  <div class="istep">
+    <h3><span class="step-num opt">D</span> Load LLM auto-labels (optional)</h3>
+    <p>Load an <code>auto_labels.csv</code> produced by <code>hnm_autolabel.py</code>.
+       Each frame's LLM decision pre-fills the review form — you confirm or override.</p>
+    <label class="fbtn" id="btn-autolabels">
+      🤖 Auto-labels CSV…
+      <input type="file" id="inp-autolabels" accept=".csv">
+    </label>
+    <div class="istatus" id="st-autolabels"></div>
+  </div>
+
+  <button class="start-btn" id="start-btn" disabled>Start Review →</button>
+  <div class="ifoot">
+    State auto-saves to localStorage (<code>hnr_v1</code>).
+    <a id="lnk-restore">Restore previous session?</a>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════ REVIEW SCREEN ═══════════════════════ -->
+<div id="review-screen" style="display:none">
+
+<!-- Toolbar -->
+<div id="toolbar">
+  <h1>Hard Negative Reviewer</h1>
+  <div class="tb-sep"></div>
+  <span id="progress-badge">0 / 0 reviewed</span>
+  <div class="tb-spacer"></div>
+  <button class="tb-btn" onclick="App.backToImport()">← Back</button>
+</div>
+
+<!-- Panels -->
+<div id="panels">
+
+  <!-- ── LEFT PANE ── -->
+  <div id="left-pane">
+    <div class="pane-hdr">Sessions</div>
+    <div id="session-list"></div>
+    <div id="filter-section">
+      <div>
+        <div class="flabel">Candidate type</div>
+        <select id="f-type">
+          <option value="">All types</option>
+          <option value="ego_disagreement">ego_disagreement</option>
+          <option value="human_trigger">human_trigger</option>
+          <option value="dense_human_cluster">dense_human_cluster</option>
+          <option value="review">review</option>
+        </select>
+      </div>
+      <div>
+        <div class="flabel">Review status</div>
+        <select id="f-status">
+          <option value="">All</option>
+          <option value="unreviewed">Unreviewed</option>
+          <option value="reviewed">Reviewed</option>
+          <option value="uncertain">Uncertain / skip</option>
+          <option value="llm_pending">LLM (unconfirmed)</option>
+          <option value="llm_confirmed">LLM (confirmed)</option>
+        </select>
+      </div>
+      <div>
+        <div class="flabel">Min score</div>
+        <div class="score-row">
+          <input type="range" id="f-score" min="0" max="15" step="0.5" value="0">
+          <span id="score-val">0</span>
+        </div>
+      </div>
+      <div>
+        <div class="flabel">Sort</div>
+        <select id="f-sort">
+          <option value="score_desc">Score ↓ (default)</option>
+          <option value="score_asc">Score ↑</option>
+          <option value="session_asc">Session / Frame ↑</option>
+          <option value="session_desc">Session / Frame ↓</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CENTER PANE ── -->
+  <div id="center-pane">
+    <div id="image-area">
+      <img id="frame-img" alt="frame overlay">
+      <div id="img-placeholder">
+        <div>No frame selected</div>
+        <div style="margin-top:6px;font-size:10px">Select a row in the table below</div>
+      </div>
+      <div id="img-badge"></div>
+      <div id="img-review-badge"></div>
+    </div>
+
+    <!-- Context strip -->
+    <div id="ctx-strip">
+      <div class="ctx-card" id="ctx-decision">
+        <div class="ctx-title">Decision</div>
+        <div class="ctx-row"><span class="ctx-k">action</span><span class="ctx-v" id="cv-action">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">reason</span><span class="ctx-v" id="cv-reason">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">urgency</span><span class="ctx-v" id="cv-urgency">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">dir</span><span class="ctx-v" id="cv-dir">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">block conf</span><span class="ctx-v" id="cv-bconf">—</span></div>
+      </div>
+      <div class="ctx-card" id="ctx-human">
+        <div class="ctx-title">Human Detection</div>
+        <div class="ctx-row"><span class="ctx-k">points</span><span class="ctx-v" id="cv-hpts">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">distance</span><span class="ctx-v" id="cv-hdist">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">sector</span><span class="ctx-v" id="cv-hsec">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">raw motion</span><span class="ctx-v" id="cv-hrmot">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">comp motion</span><span class="ctx-v" id="cv-hcmot">—</span></div>
+      </div>
+      <div class="ctx-card" id="ctx-blocking">
+        <div class="ctx-title">Blocking</div>
+        <div class="ctx-row"><span class="ctx-k">center</span><span class="ctx-v" id="cv-cen">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">left</span><span class="ctx-v" id="cv-lft">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">right</span><span class="ctx-v" id="cv-rgt">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">unet disagree</span><span class="ctx-v" id="cv-unet">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">scene conf</span><span class="ctx-v" id="cv-sconf">—</span></div>
+      </div>
+      <div class="ctx-card" id="ctx-ego">
+        <div class="ctx-title">Ego Motion</div>
+        <div class="ctx-row"><span class="ctx-k">available</span><span class="ctx-v" id="cv-egoa">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">raw speed</span><span class="ctx-v" id="cv-egos">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">comp speed</span><span class="ctx-v" id="cv-egoc">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">pt counts</span><span class="ctx-v" id="cv-egop">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">flags</span><span class="ctx-v" id="cv-flags" style="font-size:9px;max-width:90px;overflow:hidden;text-overflow:ellipsis">—</span></div>
+      </div>
+      <div class="ctx-card" id="ctx-pts">
+        <div class="ctx-title">Point Counts</div>
+        <div class="ctx-row"><span class="ctx-k">human</span><span class="ctx-v bad" id="cv-phum">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">structure</span><span class="ctx-v" id="cv-pstr">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">floor</span><span class="ctx-v ok" id="cv-pflr">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">total</span><span class="ctx-v" id="cv-ptot">—</span></div>
+        <div class="ctx-row"><span class="ctx-k">score</span><span class="ctx-v" id="cv-score">—</span></div>
+      </div>
+    </div>
+
+    <!-- Frame table -->
+    <div id="table-wrap">
+      <table id="ftable">
+        <thead>
+          <tr>
+            <th data-col="candidate_score">Score<span class="sor">↓</span></th>
+            <th data-col="session">Session</th>
+            <th data-col="frame_num">Frame</th>
+            <th data-col="candidate_type">Type</th>
+            <th data-col="reason">Reason</th>
+            <th data-col="nearest_human_points">H pts</th>
+            <th data-col="center_clear">Center</th>
+            <th data-col="_review_tag">Status</th>
+          </tr>
+        </thead>
+        <tbody id="ftable-body"></tbody>
+      </table>
+    </div>
+  </div><!-- end center-pane -->
+
+  <!-- ── RIGHT PANE ── -->
+  <div id="right-pane">
+
+    <!-- Current frame info -->
+    <div class="rsec" id="rp-info">
+      <div class="rsec-title">Current Frame</div>
+      <div class="fi" id="ri-session">Session: <strong>—</strong></div>
+      <div class="fi" id="ri-frame">Frame #: <strong>—</strong></div>
+      <div class="fi" id="ri-score">Score: <strong>—</strong></div>
+      <div class="fi" id="ri-type">Type: <strong>—</strong></div>
+    </div>
+
+    <!-- LLM suggestion banner (hidden when no auto-label for this frame) -->
+    <div class="rsec" id="rp-llm" style="display:none">
+      <div id="llm-banner">
+        <div class="llm-hdr">🤖 LLM Suggestion <span class="llm-model" id="llm-model-name"></span></div>
+        <div class="llm-row"><span class="llm-k">tag</span><span class="llm-v" id="llm-tag">—</span></div>
+        <div class="llm-row"><span class="llm-k">accumulatable</span><span class="llm-v" id="llm-acc">—</span></div>
+        <div class="llm-row"><span class="llm-k">return type</span><span class="llm-v" id="llm-rt">—</span></div>
+        <div class="llm-row"><span class="llm-k">confidence</span><span class="llm-v" id="llm-conf">—</span></div>
+        <div class="llm-notes" id="llm-notes"></div>
+        <button class="llm-accept-btn" onclick="App.acceptLLM()">Accept LLM suggestion</button>
+      </div>
+    </div>
+
+    <!-- Annotation tags -->
+    <div class="rsec">
+      <div class="rsec-title">Review Tag</div>
+      <div class="tag-grid">
+        <button class="tbtn" data-tag="human_overcall"    onclick="App.setTag(this)">Human Overcall<span class="kbd">1</span></button>
+        <button class="tbtn" data-tag="true_human"        onclick="App.setTag(this)">True Human<span class="kbd">2</span></button>
+        <button class="tbtn" data-tag="structure_mislabel"onclick="App.setTag(this)">Structure FP<span class="kbd">3</span></button>
+        <button class="tbtn" data-tag="floor_mislabel"    onclick="App.setTag(this)">Floor FP<span class="kbd">4</span></button>
+        <button class="tbtn" data-tag="uncertain"         onclick="App.setTag(this)">Uncertain<span class="kbd">5</span></button>
+        <button class="tbtn" data-tag="skip"              onclick="App.setTag(this)">Skip<span class="kbd">6</span></button>
+      </div>
+
+      <!-- Corrected label -->
+      <div style="margin-top:9px">
+        <div class="flabel" style="margin-bottom:4px">Corrected label</div>
+        <div class="lbl-row">
+          <button class="lblbtn" data-lbl="structure" onclick="App.setLabel(this)">structure</button>
+          <button class="lblbtn" data-lbl="floor"     onclick="App.setLabel(this)">floor</button>
+          <button class="lblbtn" data-lbl="human"     onclick="App.setLabel(this)">human</button>
+          <button class="lblbtn" data-lbl=""          onclick="App.setLabel(this)">— none</button>
+        </div>
+      </div>
+
+      <!-- Accumulatable -->
+      <div style="margin-top:9px">
+        <div class="flabel" style="margin-bottom:4px">Accumulatable</div>
+        <div style="display:flex;gap:5px">
+          <button class="accbtn" data-acc="yes"       onclick="App.setAcc(this)">Yes</button>
+          <button class="accbtn" data-acc="no"        onclick="App.setAcc(this)">No</button>
+          <button class="accbtn" data-acc="uncertain" onclick="App.setAcc(this)">Uncertain</button>
+        </div>
+      </div>
+
+      <!-- Return Type -->
+      <div style="margin-top:8px">
+        <div class="flabel" style="margin-bottom:4px">Return Type</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+          <button class="rtbtn" data-rt="direct"            onclick="App.setReturnType(this)">direct</button>
+          <button class="rtbtn" data-rt="rig_scatter"       onclick="App.setReturnType(this)">rig scatter</button>
+          <button class="rtbtn" data-rt="wheel_microdoppler" onclick="App.setReturnType(this)">wheel µdopp</button>
+          <button class="rtbtn" data-rt="wall_multipath"    onclick="App.setReturnType(this)">wall multipath</button>
+          <button class="rtbtn" data-rt="floor_bounce"      onclick="App.setReturnType(this)">floor bounce</button>
+          <button class="rtbtn" data-rt="unknown"           onclick="App.setReturnType(this)">unknown</button>
+        </div>
+      </div>
+
+      <!-- Review Scope -->
+      <div style="margin-top:8px">
+        <div class="flabel" style="margin-bottom:4px">Review Scope</div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          <button class="rsbtn act" data-rs="frame_predicted_human" onclick="App.setReviewScope(this)">pred human</button>
+          <button class="rsbtn"     data-rs="frame_all_points"      onclick="App.setReviewScope(this)">all points</button>
+          <button class="rsbtn"     data-rs="sector_cluster"        onclick="App.setReviewScope(this)">sector</button>
+          <button class="rsbtn"     data-rs="manual_note"           onclick="App.setReviewScope(this)">note only</button>
+        </div>
+      </div>
+
+      <!-- Confidence -->
+      <div style="margin-top:8px">
+        <div class="flabel" style="margin-bottom:4px">Confidence</div>
+        <div class="conf-row">
+          <button class="confbtn act" data-conf="high"   onclick="App.setConf(this)">High</button>
+          <button class="confbtn"     data-conf="medium" onclick="App.setConf(this)">Med</button>
+          <button class="confbtn"     data-conf="low"    onclick="App.setConf(this)">Low</button>
+        </div>
+      </div>
+
+      <!-- Span -->
+      <div class="span-section">
+        <div class="span-label">
+          <input type="checkbox" id="span-enable" onchange="App.toggleSpan(this.checked)" style="accent-color:var(--accent)">
+          <label for="span-enable" style="cursor:pointer;font-size:10px;color:var(--dim)">Apply to frame span</label>
+        </div>
+        <div id="span-controls" style="display:none">
+          <div class="span-inputs">
+            <span style="color:var(--dim);font-size:10px">From current →</span>
+            <input type="number" id="span-end" placeholder="end frame #" min="0">
+            <button class="span-btn" onclick="App.applySpan()">Apply span</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <textarea id="notes" placeholder="Optional notes…" oninput="App.setNotes(this.value)"></textarea>
+
+      <button class="apply-btn" id="apply-btn" onclick="App.applyAndNext()">Apply &amp; Next  [Enter]</button>
+    </div>
+
+    <!-- Keyboard hints -->
+    <div class="rsec">
+      <div class="rsec-title">Keyboard</div>
+      <div class="kbd-grid">
+        <kbd>j / ↓</kbd><span>Next frame</span>
+        <kbd>k / ↑</kbd><span>Previous frame</span>
+        <kbd>1–6</kbd><span>Set review tag</span>
+        <kbd>Enter</kbd><span>Apply &amp; next</span>
+        <kbd>e</kbd><span>Export both</span>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="rsec">
+      <div class="rsec-title">Export</div>
+      <div id="exp-stats" style="font-size:10px;color:var(--dim);margin-bottom:8px">—</div>
+      <button class="exp-btn" onclick="App.exportJSON()">⬇ Export review JSON</button>
+      <button class="exp-btn" onclick="App.exportCSV()">⬇ Export retrain CSV</button>
+      <button class="danger-btn" onclick="App.clearLS()">✕ Clear saved state</button>
+    </div>
+
+  </div><!-- end right-pane -->
+
+</div><!-- end panels -->
+</div><!-- end review-screen -->
+
+<script>
+'use strict';
+// ══════════════════════════════════════════════════════════
+//  Hard Negative Reviewer — Application Logic
+// ══════════════════════════════════════════════════════════
+
+const LS_KEY = 'hnr_v1';
+
+// ─── Constants ────────────────────────────────────────────
+const TAG_DEFS = [
+  { id:'human_overcall',     label:'Human Overcall',  key:'1', defaultLabel:'structure' },
+  { id:'true_human',         label:'True Human',      key:'2', defaultLabel:'human'     },
+  { id:'structure_mislabel', label:'Structure FP',    key:'3', defaultLabel:'human'     },
+  { id:'floor_mislabel',     label:'Floor FP',        key:'4', defaultLabel:'human'     },
+  { id:'uncertain',          label:'Uncertain',       key:'5', defaultLabel:''          },
+  { id:'skip',               label:'Skip',            key:'6', defaultLabel:''          },
+];
+
+const TAG_DEFAULT_LABEL = Object.fromEntries(TAG_DEFS.map(t => [t.id, t.defaultLabel]));
+const TAG_DEFAULT_ACCUMULATABLE = {
+  human_overcall:     'no',
+  true_human:         'yes',
+  structure_mislabel: 'no',
+  floor_mislabel:     'no',
+  uncertain:          'uncertain',
+  skip:               null,
+};
+const HUMAN_REASONS = new Set(['approaching_person','person_ahead','slow_down']);
+
+// ─── State ────────────────────────────────────────────────
+const S = {
+  candidates: [],       // array of normalized candidate objects
+  reviews: {},          // frameKey → review record
+  imageUrls: {},        // "session/filename" → objectURL
+
+  filteredIdx: [],      // indices into candidates[] after filter
+  currentPos: -1,       // position in filteredIdx
+
+  activeSession: null,
+  filters: { session: null, type: '', minScore: 0, status: '' },
+  sort: 'score_desc',
+
+  form: { tag: null, label: null, conf: 'high', notes: '', accumulatable: null, return_type: null, review_scope: 'frame_predicted_human' },
+  spanEnabled: false,
+
+  importMeta: {},
+
+  // LLM auto-label state
+  llmSuggestions: {},   // frameKey → {review_tag, corrected_label, accumulatable, return_type, confidence, notes}
+  llmModelName: '',
+};
+
+// ─── CSV parser (RFC 4180 subset) ─────────────────────────
+function parseCSV(text) {
+  const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  const parse = line => {
+    const out = []; let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') { inQ = false; }
+        else cur += ch;
+      } else {
+        if (ch === '"') { inQ = true; }
+        else if (ch === ',') { out.push(cur); cur = ''; }
+        else cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  };
+  const header = parse(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = parse(lines[i]);
+    const obj = {};
+    header.forEach((h, j) => { obj[h] = vals[j] ?? ''; });
+    rows.push(obj);
+  }
+  return rows;
+}
+
+// ─── Utilities ────────────────────────────────────────────
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtScore(v) {
+  const n = parseFloat(v) || 0;
+  const cls = n >= 8 ? 'sh' : n >= 5 ? 'sm' : n >= 2.5 ? 'sl' : 'sn';
+  return `<span class="score-badge ${cls}">${n.toFixed(1)}</span>`;
+}
+
+function fmtTag(tag) {
+  if (!tag) return '<span style="color:var(--dim)">—</span>';
+  return `<span class="tag-pill tp-${esc(tag)}">${esc(tag.replace(/_/g,' '))}</span>`;
+}
+
+function fmtType(type) {
+  if (!type) return '';
+  return `<span class="type-pill type-${esc(type)}">${esc(type.replace(/_/g,' '))}</span>`;
+}
+
+function frameKey(session, frameNum) { return `${session}|${frameNum}`; }
+function cKey(c) { return frameKey(c.session, c.frame_num); }
+
+function shortSession(name) {
+  // "session_2026-04-28_17-40-12" → "04-28 17:40:12"
+  const m = name.match(/(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})/);
+  if (m) return m[1].slice(5) + ' ' + m[2].replace(/-/g, ':');
+  return name.slice(-20);
+}
+
+function now() { return new Date().toISOString(); }
+
+function download(filename, text, mime) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type: mime}));
+  a.download = filename; a.click();
+}
+
+function dateTag() {
+  return new Date().toISOString().slice(0,10);
+}
+
+function readFileText(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => res(e.target.result);
+    r.onerror = rej;
+    r.readAsText(file);
+  });
+}
+
+// ─── Inline score computation (mirrors 3branch_hard_negative_mining.py) ──────
+function computeScore(decision, scene) {
+  decision = decision || {};
+  scene = scene || {};
+  const openDirs = scene.open_directions || {};
+  const ego = scene.ego_motion || {};
+
+  const reason      = String(decision.reason || decision.primary_action || '');
+  const rawMotion   = decision.nearest_human_raw_motion;
+  const relMotion   = decision.nearest_human_motion;
+  const rawSpeed    = parseFloat(decision.nearest_human_raw_speed_mps || 0);
+  const relSpeed    = parseFloat(decision.nearest_human_speed_mps || 0);
+  const humanPoints = parseInt(decision.nearest_human_points || 0);
+  const humanCount  = parseInt(decision.n_humans || 0);
+  const centerClear = decision.center_clear !== false;
+  const egoAvail    = ego.available === true;
+
+  let score = 0; const flags = [];
+
+  if (HUMAN_REASONS.has(reason)) { flags.push(`human_reason:${reason}`); score += 3.0; }
+  if (rawMotion === 'approaching') { flags.push('raw_approaching'); score += 1.5; }
+  if (rawMotion === 'approaching' && (relMotion === 'static' || relMotion === 'receding')) {
+    flags.push('ego_motion_disagreement'); score += 4.0;
+  }
+  if (centerClear && HUMAN_REASONS.has(reason)) { flags.push('center_clear_but_human_triggered'); score += 1.5; }
+  if (humanPoints >= 14) { flags.push('enough_human_points'); score += Math.min(humanPoints / 10, 2.5); }
+  if (humanCount >= 2) { flags.push('multi_human_cluster'); score += 0.5; }
+  if (rawSpeed >= 0.5) { flags.push('raw_speed_high'); score += 0.5; }
+  if (egoAvail) { flags.push('ego_motion_available'); score += 0.2; }
+  if (relSpeed <= 0.25 && rawSpeed > 0.25 && rawMotion === 'approaching') {
+    flags.push('static_after_compensation'); score += 2.5;
+  }
+  flags.push(openDirs.center_clear === false ? 'center_blocked' : 'center_open');
+
+  let type = 'review';
+  if (flags.includes('ego_motion_disagreement')) type = 'ego_disagreement';
+  else if (HUMAN_REASONS.has(reason)) type = 'human_trigger';
+  else if (humanPoints >= 14 && rawMotion === 'approaching') type = 'dense_human_cluster';
+
+  return { score: Math.round(score * 100) / 100, type, flags: flags.join(';') };
+}
+
+// ─── Data normalisation ───────────────────────────────────
+function normFromMiningRow(r) {
+  return {
+    session:       r.session || '',
+    frame_num:     parseInt(r.frame_num || 0),
+    frame_idx:     parseInt(r.frame_idx || 0),
+    output_frame_idx: parseInt(r.output_frame_idx || 0),
+    image:         r.image_path ? String(r.image_path).split('/').pop() : (r.image || ''),
+    image_path:    r.image_path || '',
+    candidate_score: parseFloat(r.candidate_score || 0),
+    candidate_type:  r.candidate_type || 'review',
+    candidate_flags: r.candidate_flags || '',
+    manifest:        r.manifest || '',
+    sim_time_s:      parseFloat(r.sim_time_s || 0),
+    radar_time_ms:   r.radar_time_ms ?? null,
+    primary_action:  r.primary_action || '',
+    reason:          r.reason || '',
+    urgency:         r.urgency || '',
+    best_direction:  r.best_direction || '',
+    center_clear:    r.center_clear === true || r.center_clear === 'true',
+    left_clear:      r.left_clear   === true || r.left_clear   === 'true',
+    right_clear:     r.right_clear  === true || r.right_clear  === 'true',
+    nearest_human_ft:          parseFloat(r.nearest_human_ft || 0),
+    nearest_human_sector:      r.nearest_human_sector || '',
+    nearest_human_motion:      r.nearest_human_motion || '',
+    nearest_human_raw_motion:  r.nearest_human_raw_motion || '',
+    nearest_human_speed_mps:   parseFloat(r.nearest_human_speed_mps || 0),
+    nearest_human_raw_speed_mps: parseFloat(r.nearest_human_raw_speed_mps || 0),
+    nearest_human_points:      parseInt(r.nearest_human_points || 0),
+    n_humans:                  parseInt(r.n_humans || 0),
+    scene_human_count:         parseInt(r.scene_human_count || 0),
+    scene_structure_count:     parseInt(r.scene_structure_count || 0),
+    scene_floor_count:         parseInt(r.scene_floor_count || 0),
+    ego_available:   r.ego_available === true || r.ego_available === 'true',
+    ego_speed_mps:   parseFloat(r.ego_speed_mps || 0),
+    ego_raw_speed_mps: parseFloat(r.ego_raw_speed_mps || 0),
+    ego_static_points: parseInt(r.ego_static_points || 0),
+    ego_candidate_points: parseInt(r.ego_candidate_points || r.ego_static_points || 0),
+    confidence:        r.confidence || '',
+    blocking_confidence: r.blocking_confidence || '',
+    open_directions_confidence: r.open_directions_confidence || '',
+    _fmt: 'mining',
+  };
+}
+
+function normFromSample(sample, sessionName) {
+  const dec = sample.decision || {};
+  const sc  = sample.scene || {};
+  const ego = sc.ego_motion || {};
+  const cls = sc.class_counts || sample.point_counts || {};
+  const scored = computeScore(dec, sc);
+  return {
+    session:       sessionName,
+    frame_num:     parseInt(sample.frame_num || 0),
+    frame_idx:     parseInt(sample.frame_idx || 0),
+    output_frame_idx: parseInt(sample.output_frame_idx || 0),
+    image:         sample.image || '',
+    image_path:    sample.image_path || '',
+    candidate_score: scored.score,
+    candidate_type:  scored.type,
+    candidate_flags: scored.flags,
+    manifest:        '',
+    sim_time_s:      parseFloat(sample.sim_time_s || 0),
+    radar_time_ms:   sample.radar_time_ms ?? null,
+    primary_action:  dec.primary_action || '',
+    reason:          dec.reason || '',
+    urgency:         dec.urgency || '',
+    best_direction:  dec.best_direction || '',
+    center_clear:    dec.center_clear !== false,
+    left_clear:      dec.left_clear  !== false,
+    right_clear:     dec.right_clear !== false,
+    nearest_human_ft:          parseFloat(dec.nearest_human_ft || 0),
+    nearest_human_sector:      dec.nearest_human_sector || '',
+    nearest_human_motion:      dec.nearest_human_motion || '',
+    nearest_human_raw_motion:  dec.nearest_human_raw_motion || '',
+    nearest_human_speed_mps:   parseFloat(dec.nearest_human_speed_mps || 0),
+    nearest_human_raw_speed_mps: parseFloat(dec.nearest_human_raw_speed_mps || 0),
+    nearest_human_points:      parseInt(dec.nearest_human_points || 0),
+    n_humans:                  parseInt(dec.n_humans || 0),
+    scene_human_count:         parseInt((sc.humans || {}).count || 0),
+    scene_structure_count:     parseInt(cls.structure || 0),
+    scene_floor_count:         parseInt(cls.floor || 0),
+    ego_available:   ego.available === true,
+    ego_speed_mps:   parseFloat(ego.speed_mps || 0),
+    ego_raw_speed_mps: parseFloat(ego.raw_speed_mps || 0),
+    ego_static_points: parseInt(ego.n_static_points || 0),
+    ego_candidate_points: parseInt(ego.n_candidate_points || ego.n_static_points || 0),
+    confidence:        dec.confidence || '',
+    blocking_confidence: dec.blocking_confidence || '',
+    open_directions_confidence: sc.open_directions_confidence || '',
+    _point_count:    parseInt(sample.point_count || 0),
+    _fmt: 'debug_frames',
+  };
+}
+
+function normFromAutoLabelRow(r) {
+  // Produce a candidate object from an auto_labels.csv row so the reviewer
+  // can display it in the table and load its image.
+  const score = parseFloat(r.candidate_score || 0);
+  return {
+    session:          r.session || '',
+    frame_num:        parseInt(r.frame_num || 0),
+    frame_idx:        parseInt(r.frame_idx || r.frame_num || 0),
+    output_frame_idx: parseInt(r.output_frame_idx || r.frame_num || 0),
+    image:            r.image_path ? String(r.image_path).split('/').pop() : '',
+    image_path:       r.image_path || '',
+    candidate_score:  score,
+    candidate_type:   r.candidate_type || 'human_trigger',
+    candidate_flags:  r.candidate_flags || '',
+    manifest: '', sim_time_s: 0, radar_time_ms: null,
+    primary_action: r.reason || '', reason: r.reason || '',
+    urgency: '', best_direction: '',
+    center_clear:   r.center_clear === 'true',
+    left_clear:     r.left_clear  === 'true',
+    right_clear:    r.right_clear === 'true',
+    nearest_human_ft: 0, nearest_human_sector: '',
+    nearest_human_motion: '', nearest_human_raw_motion: '',
+    nearest_human_speed_mps: 0, nearest_human_raw_speed_mps: 0,
+    nearest_human_points: parseInt(r.nearest_human_points || 0),
+    n_humans: 0, scene_human_count: 0,
+    scene_structure_count: 0, scene_floor_count: 0,
+    ego_available: false, ego_speed_mps: 0, ego_raw_speed_mps: 0,
+    ego_static_points: 0, ego_candidate_points: 0,
+    confidence: '', blocking_confidence: '', open_directions_confidence: '',
+    _fmt: 'autolabel',
+  };
+}
+
+// ─── Image URL management ─────────────────────────────────
+function buildImageUrlsFromFileList(files) {
+  const urls = {};
+  for (const f of files) {
+    const rp = f.webkitRelativePath || f.name;
+    const fn = rp.split('/').pop();
+    if (!fn.match(/\.(png|jpg|jpeg)$/i)) continue;
+    const parts = rp.split('/');
+    const sessionName = parts.length >= 2 ? parts[parts.length - 2] : '';
+    const key = `${sessionName}/${fn}`;
+    if (!urls[key]) urls[key] = URL.createObjectURL(f);
+  }
+  return urls;
+}
+
+function getImageUrl(c) {
+  const fn = c.image || (c.image_path ? String(c.image_path).split('/').pop() : '');
+  if (!fn) return null;
+  return S.imageUrls[`${c.session}/${fn}`] || null;
+}
+
+// ─── Filtering / sorting ──────────────────────────────────
+function applyFilter() {
+  const f = S.filters;
+  let idxs = S.candidates.map((_,i) => i);
+
+  if (f.session) idxs = idxs.filter(i => S.candidates[i].session === f.session);
+  if (f.type)    idxs = idxs.filter(i => S.candidates[i].candidate_type === f.type);
+  if (f.minScore > 0) idxs = idxs.filter(i => S.candidates[i].candidate_score >= f.minScore);
+
+  if (f.status === 'unreviewed') {
+    idxs = idxs.filter(i => !S.reviews[cKey(S.candidates[i])]);
+  } else if (f.status === 'reviewed') {
+    idxs = idxs.filter(i => {
+      const r = S.reviews[cKey(S.candidates[i])];
+      return r && r.review_tag && !['uncertain','skip'].includes(r.review_tag);
+    });
+  } else if (f.status === 'uncertain') {
+    idxs = idxs.filter(i => {
+      const r = S.reviews[cKey(S.candidates[i])];
+      return r && ['uncertain','skip'].includes(r.review_tag);
+    });
+  } else if (f.status === 'llm_pending') {
+    idxs = idxs.filter(i => {
+      const k = cKey(S.candidates[i]);
+      return S.llmSuggestions[k] && !S.reviews[k];
+    });
+  } else if (f.status === 'llm_confirmed') {
+    idxs = idxs.filter(i => {
+      const r = S.reviews[cKey(S.candidates[i])];
+      return r && r._llm_confirmed;
+    });
+  }
+
+  const sort = S.sort;
+  idxs.sort((a, b) => {
+    const ca = S.candidates[a], cb = S.candidates[b];
+    if (sort === 'score_desc') return cb.candidate_score - ca.candidate_score || a - b;
+    if (sort === 'score_asc')  return ca.candidate_score - cb.candidate_score || a - b;
+    const cmp = ca.session.localeCompare(cb.session) || (ca.frame_num - cb.frame_num);
+    return sort === 'session_desc' ? -cmp : cmp;
+  });
+
+  S.filteredIdx = idxs;
+}
+
+function selectFirstFiltered() {
+  S.currentPos = S.filteredIdx.length ? 0 : -1;
+}
+
+function syncFilterControls() {
+  document.getElementById('f-type').value = S.filters.type || '';
+  document.getElementById('f-status').value = S.filters.status || '';
+  document.getElementById('f-score').value = String(S.filters.minScore || 0);
+  document.getElementById('score-val').textContent = String(S.filters.minScore || 0);
+  document.getElementById('f-sort').value = S.sort || 'score_desc';
+}
+
+// ─── Rendering ────────────────────────────────────────────
+function renderSessions() {
+  const stats = {};
+  for (const c of S.candidates) {
+    if (!stats[c.session]) stats[c.session] = { total: 0, done: 0 };
+    stats[c.session].total++;
+    const r = S.reviews[cKey(c)];
+    if (r && r.review_tag && !['uncertain','skip',''].includes(r.review_tag)) stats[c.session].done++;
+  }
+
+  let html = '';
+  const allDone = Object.values(stats).reduce((a,s) => a+s.done, 0);
+  const allTotal = S.candidates.length;
+  const allActive = S.activeSession === null;
+  html += `<div class="sitem ${allActive?'active':''}" data-session-idx="-1">
+    <div class="sitem-name">All Sessions</div>
+    <div class="sitem-meta"><span>${allTotal} candidates</span><span>${allDone} done</span></div>
+  </div>`;
+
+  S.sessionNames = Object.keys(stats).sort();
+  S.sessionNames.forEach((name, idx) => {
+    const st = stats[name];
+    const pct = st.total ? Math.round(st.done / st.total * 100) : 0;
+    const active = S.activeSession === name;
+    html += `<div class="sitem ${active?'active':''}" data-session-idx="${idx}">
+      <div class="sitem-name" title="${esc(name)}">${esc(shortSession(name))}</div>
+      <div class="sitem-meta"><span>${st.total} cands</span><span>${st.done}/${st.total}</span></div>
+      <div class="sitem-bar"><div class="sitem-bar-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  });
+  document.getElementById('session-list').innerHTML = html;
+  document.querySelectorAll('#session-list .sitem').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.sessionIdx || '-1', 10);
+      App_filterSession(idx < 0 ? null : S.sessionNames[idx]);
+    });
+  });
+}
+
+function renderTable() {
+  const tbody = document.getElementById('ftable-body');
+  if (!S.filteredIdx.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--dim)">No candidates match current filters</td></tr>`;
+    return;
+  }
+
+  // Lazy rendering: if a session is selected, only render its candidates.
+  // If "All Sessions" is active, show a "select a session" prompt instead of
+  // thousands of rows — the table is hidden and a placeholder message appears.
+  const hasSessionFilter = S.activeSession !== null;
+
+  if (!hasSessionFilter) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--dim)">
+      <div style="line-height:1.6">
+        ${S.filteredIdx.length} candidates across all sessions.<br>
+        Select a session from the left panel to load its frames.<br>
+        <span style="font-size:10px;color:#555">Tip: use the candidate-type / min-score filters first, then pick a session</span>
+      </div>
+    </td></tr>`;
+    return;
+  }
+
+  const rows = S.filteredIdx.map((ci, pos) => {
+    const c = S.candidates[ci];
+    const k = cKey(c);
+    const r = S.reviews[k];
+    const sel = pos === S.currentPos;
+    const tag = r ? r.review_tag : '';
+    const hasLLM = !!S.llmSuggestions[k];
+    const llmConfirmed = r && r._llm_confirmed;
+    let statusCell = fmtTag(tag);
+    if (!r && hasLLM) statusCell = '<span class="llm-source-pill">🤖 LLM</span>';
+    else if (llmConfirmed) statusCell = fmtTag(tag) + ' <span class="llm-confirmed-pill">✓</span>';
+    return `<tr class="${sel?'sel':''}" onclick="App.selectPos(${pos})">
+      <td>${fmtScore(c.candidate_score)}</td>
+      <td title="${esc(c.session)}">${esc(shortSession(c.session))}</td>
+      <td>${c.frame_num}</td>
+      <td>${fmtType(c.candidate_type)}</td>
+      <td title="${esc(c.reason)}">${esc(c.reason||'—')}</td>
+      <td>${c.nearest_human_points || '—'}</td>
+      <td><span class="ctx-v ${c.center_clear?'ok':'bad'}">${c.center_clear?'✓':'✗'}</span></td>
+      <td>${statusCell}</td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows.join('');
+
+  // Scroll selected into view
+  const selRow = tbody.querySelector('tr.sel');
+  if (selRow) selRow.scrollIntoView({block: 'nearest'});
+}
+
+function renderImage(c) {
+  const img = document.getElementById('frame-img');
+  const ph  = document.getElementById('img-placeholder');
+  const badge = document.getElementById('img-badge');
+  const rbadge = document.getElementById('img-review-badge');
+
+  if (!c) {
+    img.style.display = 'none'; ph.style.display = ''; badge.textContent = ''; rbadge.style.display = 'none';
+    return;
+  }
+
+  const url = getImageUrl(c);
+  if (url) {
+    img.src = url; img.style.display = 'block'; ph.style.display = 'none';
+  } else {
+    img.style.display = 'none';
+    ph.style.display = '';
+    ph.innerHTML = `<div style="color:var(--dim)">Image not loaded</div>
+      <div style="font-size:10px;margin-top:6px;color:#555">${esc(c.image || c.image_path || '')}</div>
+      <div style="font-size:10px;margin-top:3px;color:#555">Annotation still possible</div>`;
+  }
+
+  badge.textContent = `${shortSession(c.session)}  f${c.frame_num}  ${c.sim_time_s.toFixed(1)}s`;
+
+  const r = S.reviews[cKey(c)];
+  if (r && r.review_tag) {
+    rbadge.style.display = '';
+    rbadge.className = `tag-pill tp-${r.review_tag}`;
+    rbadge.textContent = r.review_tag.replace(/_/g,' ');
+  } else {
+    rbadge.style.display = 'none';
+  }
+}
+
+function setCtxVal(id, val, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = val ?? '—';
+  el.className = 'ctx-v' + (cls ? ` ${cls}` : '');
+}
+
+function renderContext(c) {
+  if (!c) {
+    ['action','reason','urgency','dir','bconf',
+     'hpts','hdist','hsec','hrmot','hcmot',
+     'cen','lft','rgt','unet','sconf',
+     'egoa','egos','egoc','egop','flags',
+     'phum','pstr','pflr','ptot','score'].forEach(id => setCtxVal('cv-'+id,'—'));
+    return;
+  }
+
+  setCtxVal('cv-action', c.primary_action || c.reason);
+  setCtxVal('cv-reason', c.reason);
+  setCtxVal('cv-urgency', c.urgency, c.urgency==='high'?'bad':c.urgency==='low'?'ok':'');
+  setCtxVal('cv-dir', c.best_direction);
+  setCtxVal('cv-bconf', c.blocking_confidence);
+
+  const hpts = c.nearest_human_points;
+  setCtxVal('cv-hpts', hpts, hpts >= 14 ? 'warn' : '');
+  setCtxVal('cv-hdist', c.nearest_human_ft ? `${c.nearest_human_ft.toFixed(1)} ft` : '—');
+  setCtxVal('cv-hsec', c.nearest_human_sector);
+  setCtxVal('cv-hrmot', c.nearest_human_raw_motion,
+    c.nearest_human_raw_motion==='approaching'?'bad':'ok');
+  setCtxVal('cv-hcmot', c.nearest_human_motion);
+
+  setCtxVal('cv-cen', c.center_clear?'clear':'BLOCKED', c.center_clear?'ok':'bad');
+  setCtxVal('cv-lft', c.left_clear?'clear':'blocked', c.left_clear?'ok':'warn');
+  setCtxVal('cv-rgt', c.right_clear?'clear':'blocked', c.right_clear?'ok':'warn');
+  setCtxVal('cv-unet', '—');
+  setCtxVal('cv-sconf', c.open_directions_confidence || c.confidence);
+
+  setCtxVal('cv-egoa', c.ego_available?'yes':'no', c.ego_available?'ok':'');
+  setCtxVal('cv-egos', `${c.ego_raw_speed_mps.toFixed(2)} m/s`);
+  setCtxVal('cv-egoc', `${c.ego_speed_mps.toFixed(2)} m/s`);
+  setCtxVal('cv-egop', `${c.ego_static_points}/${c.ego_candidate_points}`);
+
+  const flagList = (c.candidate_flags||'').split(';').filter(Boolean);
+  setCtxVal('cv-flags', flagList.slice(0,4).join(' | ') || '—');
+  document.getElementById('cv-flags').title = c.candidate_flags || '';
+
+  const hum = c.scene_human_count || c.n_humans || 0;
+  setCtxVal('cv-phum', hum, hum>0?'bad':'');
+  setCtxVal('cv-pstr', c.scene_structure_count);
+  setCtxVal('cv-pflr', c.scene_floor_count);
+  setCtxVal('cv-ptot', c._point_count ?? '—');
+  setCtxVal('cv-score', c.candidate_score.toFixed(2));
+}
+
+function renderInfo(c) {
+  const ri = (id, html) => { document.getElementById(id).innerHTML = html; };
+  if (!c) {
+    ri('ri-session','Session: <strong>—</strong>');
+    ri('ri-frame','Frame #: <strong>—</strong>');
+    ri('ri-score','Score: <strong>—</strong>');
+    ri('ri-type','Type: <strong>—</strong>');
+    return;
+  }
+  ri('ri-session', `Session: <strong title="${esc(c.session)}">${esc(shortSession(c.session))}</strong>`);
+  ri('ri-frame', `Frame #: <strong>${c.frame_num}</strong> (idx ${c.frame_idx})`);
+  ri('ri-score', `Score: ${fmtScore(c.candidate_score)}`);
+  ri('ri-type', `Type: ${fmtType(c.candidate_type)}`);
+}
+
+function renderFormState() {
+  // Tags
+  document.querySelectorAll('.tbtn').forEach(b => {
+    b.classList.toggle('act', b.dataset.tag === S.form.tag);
+  });
+  // Labels
+  document.querySelectorAll('.lblbtn').forEach(b => {
+    b.classList.toggle('act', b.dataset.lbl === (S.form.label ?? ''));
+  });
+  // Confidence
+  document.querySelectorAll('.confbtn').forEach(b => {
+    b.classList.toggle('act', b.dataset.conf === S.form.conf);
+  });
+  // Accumulatable
+  document.querySelectorAll('.accbtn').forEach(b => {
+    b.classList.toggle('act', b.dataset.acc === (S.form.accumulatable ?? ''));
+  });
+  // Return type
+  document.querySelectorAll('.rtbtn').forEach(b => {
+    b.classList.toggle('act', b.dataset.rt === (S.form.return_type ?? ''));
+  });
+  // Review scope
+  document.querySelectorAll('.rsbtn').forEach(b => {
+    b.classList.toggle('act', b.dataset.rs === (S.form.review_scope || 'frame_predicted_human'));
+  });
+
+  document.getElementById('notes').value = S.form.notes;
+
+  // Restore review state of current frame into form if not yet annotated this session
+  const c = currentCandidate();
+  if (c) {
+    const r = S.reviews[cKey(c)];
+    if (r && r.review_tag && S.form.tag === null) {
+      S.form.tag          = r.review_tag;
+      S.form.label        = r.corrected_label ?? null;
+      S.form.accumulatable = r.accumulatable ?? null;
+      S.form.return_type  = r.return_type ?? null;
+      S.form.review_scope = r.review_scope || 'frame_predicted_human';
+      S.form.conf         = r.confidence || 'high';
+      S.form.notes        = r.notes || '';
+      renderFormState(); // re-run after update
+    }
+  }
+}
+
+function renderProgress() {
+  const total = S.candidates.length;
+  const done  = Object.values(S.reviews).filter(r => r.review_tag && !['uncertain','skip'].includes(r.review_tag)).length;
+  const llmPending = S.candidates.filter(c => {
+    const k = cKey(c);
+    return S.llmSuggestions[k] && !S.reviews[k];
+  }).length;
+  let badge = `${done} / ${total} reviewed (${total?Math.round(done/total*100):0}%)`;
+  if (llmPending > 0) badge += `  ·  🤖 ${llmPending} LLM pending`;
+  document.getElementById('progress-badge').textContent = badge;
+  document.getElementById('exp-stats').textContent =
+    `${Object.keys(S.reviews).length} annotations total · ${done} actionable`;
+}
+
+function renderLLMBanner(c) {
+  const sec = document.getElementById('rp-llm');
+  if (!c) { sec.style.display = 'none'; return; }
+  const sug = S.llmSuggestions[cKey(c)];
+  if (!sug) { sec.style.display = 'none'; return; }
+
+  sec.style.display = '';
+  document.getElementById('llm-model-name').textContent = S.llmModelName ? `· ${S.llmModelName}` : '';
+
+  const tagEl = document.getElementById('llm-tag');
+  tagEl.textContent = sug.review_tag || '—';
+  tagEl.className = 'llm-v';
+
+  const accEl = document.getElementById('llm-acc');
+  accEl.textContent = sug.accumulatable || '—';
+  accEl.className = 'llm-v' + (sug.accumulatable === 'no' ? ' llm-no' : sug.accumulatable === 'yes' ? ' llm-yes' : ' llm-unc');
+
+  document.getElementById('llm-rt').textContent   = sug.return_type || '—';
+  document.getElementById('llm-conf').textContent  = sug.confidence  || '—';
+  document.getElementById('llm-notes').textContent = sug.notes || '';
+
+  // If the human has already confirmed this LLM suggestion, label the button
+  const rev = S.reviews[cKey(c)];
+  const btn = sec.querySelector('.llm-accept-btn');
+  if (rev && rev._llm_confirmed) {
+    btn.textContent = '✓ Confirmed';
+    btn.style.opacity = '0.5';
+    btn.style.cursor = 'default';
+  } else {
+    btn.textContent = 'Accept LLM suggestion';
+    btn.style.opacity = '';
+    btn.style.cursor = '';
+  }
+}
+
+function App_acceptLLM() {
+  const c = currentCandidate();
+  if (!c) return;
+  const sug = S.llmSuggestions[cKey(c)];
+  if (!sug) return;
+  S.form.tag          = sug.review_tag   || null;
+  S.form.label        = sug.corrected_label || null;
+  S.form.accumulatable = sug.accumulatable || null;
+  S.form.return_type  = sug.return_type   || null;
+  S.form.conf         = sug.confidence    || 'high';
+  S.form.notes        = sug.notes         || '';
+  S.form.review_scope = 'frame_predicted_human';
+  // Commit immediately
+  const rec = buildReviewRecord(c);
+  rec._llm_source    = true;
+  rec._llm_confirmed = true;
+  S.reviews[cKey(c)] = rec;
+  saveLS();
+  renderAll();
+  App_navigate(1);
+}
+
+function renderAll() {
+  renderSessions();
+  renderTable();
+  const c = currentCandidate();
+  renderImage(c);
+  renderContext(c);
+  renderInfo(c);
+  renderLLMBanner(c);
+  renderFormState();
+  renderProgress();
+  updateSortHeaders();
+}
+
+function updateSortHeaders() {
+  document.querySelectorAll('#ftable thead th[data-col]').forEach(th => {
+    th.classList.remove('sorted');
+    const sor = th.querySelector('.sor');
+    if (sor) sor.textContent = '↕';
+  });
+}
+
+// ─── Navigation ───────────────────────────────────────────
+function currentCandidate() {
+  if (S.currentPos < 0 || S.currentPos >= S.filteredIdx.length) return null;
+  return S.candidates[S.filteredIdx[S.currentPos]];
+}
+
+function App_selectPos(pos) {
+  if (pos < 0 || pos >= S.filteredIdx.length) return;
+  S.currentPos = pos;
+  // Reset annotation fields; keep conf for quick bulk annotation
+  S.form.tag          = null;
+  S.form.label        = null;
+  S.form.accumulatable = null;
+  S.form.return_type  = null;
+  S.form.review_scope = 'frame_predicted_human';
+  S.form.notes        = '';
+
+  // Pre-populate from LLM suggestion when frame has not yet been reviewed
+  const c = S.candidates[S.filteredIdx[pos]];
+  if (c) {
+    const k = cKey(c);
+    const sug = S.llmSuggestions[k];
+    const rev = S.reviews[k];
+    if (sug && !rev) {
+      S.form.tag          = sug.review_tag      || null;
+      S.form.label        = sug.corrected_label  || null;
+      S.form.accumulatable = sug.accumulatable   || null;
+      S.form.return_type  = sug.return_type      || null;
+      S.form.conf         = sug.confidence       || 'high';
+      S.form.notes        = '';  // keep notes blank; human fills in if needed
+    }
+  }
+
+  renderAll();
+}
+
+function App_navigate(delta) {
+  const next = S.currentPos + delta;
+  if (next >= 0 && next < S.filteredIdx.length) App_selectPos(next);
+}
+
+// ─── Annotation ───────────────────────────────────────────
+function App_setTag(btnOrTag) {
+  const tag = typeof btnOrTag === 'string' ? btnOrTag : btnOrTag.dataset.tag;
+  S.form.tag = tag;
+  // Auto-set default corrected label unless user already set one
+  const defaultLbl = TAG_DEFAULT_LABEL[tag] ?? '';
+  if (S.form.label === null || S.form.label === undefined) {
+    S.form.label = defaultLbl;
+  }
+  // Auto-set accumulatable default unless user already set one
+  if (S.form.accumulatable === null || S.form.accumulatable === undefined) {
+    S.form.accumulatable = TAG_DEFAULT_ACCUMULATABLE[tag] ?? null;
+  }
+  renderFormState();
+}
+
+function App_setAcc(btn) {
+  S.form.accumulatable = btn.dataset.acc;
+  renderFormState();
+}
+
+function App_setReturnType(btn) {
+  S.form.return_type = btn.dataset.rt;
+  renderFormState();
+}
+
+function App_setReviewScope(btn) {
+  S.form.review_scope = btn.dataset.rs;
+  renderFormState();
+}
+
+function App_setLabel(btn) {
+  S.form.label = btn.dataset.lbl;
+  renderFormState();
+}
+
+function App_setConf(btn) {
+  S.form.conf = btn.dataset.conf;
+  renderFormState();
+}
+
+function App_setNotes(val) {
+  S.form.notes = val;
+}
+
+function App_toggleSpan(enabled) {
+  S.spanEnabled = enabled;
+  document.getElementById('span-controls').style.display = enabled ? '' : 'none';
+}
+
+function buildReviewRecord(c, spanStart, spanEnd) {
+  return {
+    session:       c.session,
+    frame_num:     c.frame_num,
+    frame_idx:     c.frame_idx,
+    output_frame_idx: c.output_frame_idx,
+    image_path:    c.image_path || c.image,
+    candidate_score:  c.candidate_score,
+    candidate_type:   c.candidate_type,
+    candidate_flags:  c.candidate_flags,
+    review_tag:       S.form.tag || '',
+    corrected_label:  S.form.label ?? '',
+    semantic_correction: S.form.label ?? '',
+    accumulatable:    S.form.accumulatable ?? '',
+    return_type:      S.form.return_type ?? '',
+    review_scope:     S.form.review_scope || 'frame_predicted_human',
+    confidence:       S.form.conf,
+    notes:            S.form.notes,
+    span_start_frame: spanStart ?? c.frame_num,
+    span_end_frame:   spanEnd   ?? c.frame_num,
+    reviewed_at:      now(),
+    review_source:    'human',
+    // decision context for auditability
+    context: {
+      primary_action: c.primary_action, reason: c.reason, urgency: c.urgency,
+      nearest_human_ft: c.nearest_human_ft, nearest_human_points: c.nearest_human_points,
+      nearest_human_raw_motion: c.nearest_human_raw_motion,
+      nearest_human_motion: c.nearest_human_motion,
+      center_clear: c.center_clear, ego_available: c.ego_available,
+      ego_raw_speed_mps: c.ego_raw_speed_mps,
+    },
+  };
+}
+
+function App_applyAnnotation() {
+  const c = currentCandidate();
+  if (!c || !S.form.tag) return;
+  S.reviews[cKey(c)] = buildReviewRecord(c);
+  saveLS();
+  renderAll();
+}
+
+function App_applyAndNext() {
+  App_applyAnnotation();
+  App_navigate(1);
+}
+
+function App_applySpan() {
+  const c = currentCandidate();
+  if (!c || !S.form.tag) return;
+
+  const endFrame = parseInt(document.getElementById('span-end').value || c.frame_num);
+  const startFrame = c.frame_num;
+
+  // Find all candidates in same session within [startFrame, endFrame]
+  let count = 0;
+  for (const cand of S.candidates) {
+    if (cand.session !== c.session) continue;
+    if (cand.frame_num < startFrame || cand.frame_num > endFrame) continue;
+    S.reviews[cKey(cand)] = buildReviewRecord(cand, startFrame, endFrame);
+    count++;
+  }
+  saveLS();
+  alert(`Span applied to ${count} frame(s) in [${startFrame}–${endFrame}] for session ${shortSession(c.session)}`);
+  renderAll();
+}
+
+// ─── Session/filter actions ───────────────────────────────
+function App_filterSession(name) {
+  S.activeSession = name;
+  S.filters.session = name;
+  applyFilter();
+  selectFirstFiltered();
+  renderAll();
+  saveLS();
+}
+
+// ─── LocalStorage ─────────────────────────────────────────
+function buildLSPayload() {
+  return {
+    version: 2, savedAt: now(),
+    reviews: S.reviews,
+    filters: S.filters,
+    sort: S.sort,
+    importMeta: S.importMeta,
+    llmSuggestions: S.llmSuggestions,
+    llmModelName: S.llmModelName,
+  };
+}
+
+function saveLS() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(buildLSPayload()));
+  } catch(e) {
+    console.warn('LS save failed; clearing stale oversized state and retrying', e);
+    try {
+      localStorage.removeItem(LS_KEY);
+      localStorage.setItem(LS_KEY, JSON.stringify(buildLSPayload()));
+    } catch(e2) {
+      console.warn('LS save retry failed', e2);
+    }
+  }
+}
+
+function loadLS() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+}
+
+function App_clearLS() {
+  if (!confirm('Clear all saved annotation state? This cannot be undone.')) return;
+  localStorage.removeItem(LS_KEY);
+  S.reviews = {};
+  renderAll();
+}
+
+// ─── Export ───────────────────────────────────────────────
+function App_exportJSON() {
+  const reviews = Object.values(S.reviews).filter(r => r.review_tag);
+  const payload = {
+    export_meta: {
+      exported_at: now(), tool: 'hard_negative_reviewer', version: '1.0',
+      total_candidates: S.candidates.length,
+      total_reviewed: reviews.length,
+      import_meta: S.importMeta,
+    },
+    reviews,
+  };
+  download(`hard_negative_review_${dateTag()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+}
+
+function App_exportCSV() {
+  const cols = [
+    'session','frame_num','frame_idx','output_frame_idx','image_path',
+    'candidate_score','candidate_type','candidate_flags',
+    'review_tag','corrected_label','semantic_correction',
+    'accumulatable','return_type','review_scope',
+    'confidence','notes',
+    'span_start_frame','span_end_frame','reviewed_at','review_source',
+  ];
+  const rows = Object.values(S.reviews).filter(r => r.review_tag);
+  let csv = cols.join(',') + '\n';
+  for (const r of rows) {
+    csv += cols.map(c => {
+      const v = String(r[c] ?? '');
+      return v.includes(',') || v.includes('"') || v.includes('\n')
+        ? `"${v.replace(/"/g,'""')}"`
+        : v;
+    }).join(',') + '\n';
+  }
+  download(`hard_negative_review_${dateTag()}.csv`, csv, 'text/csv');
+}
+
+function App_exportAll() {
+  App_exportJSON();
+  App_exportCSV();
+}
+
+// ─── Import flow ──────────────────────────────────────────
+const pending = { candidates: null, images: null, resume: null, llmSuggestions: null, llmModelName: '' };
+
+// Path D: auto-labels CSV
+document.getElementById('inp-autolabels').addEventListener('change', async function() {
+  const f = this.files[0]; if (!f) return;
+  setStatus('st-autolabels', 'Parsing…', 'inf'); // parse negative values
+  try {
+    const text = await readFileText(f);
+    const rows = parseCSV(text);
+    const okRows = rows.filter(r => !r.auto_label_status || r.auto_label_status === 'ok');
+
+    // Build suggestion map and, if no candidates loaded yet, also build candidate list
+    const suggestions = {};
+    const newCandidates = [];
+    for (const r of okRows) {
+      if (!r.session || r.frame_num === undefined) continue;
+      const k = frameKey(r.session, r.frame_num);
+      suggestions[k] = {
+        review_tag:      r.review_tag      || '',
+        corrected_label: r.corrected_label || r.semantic_correction || '',
+        accumulatable:   r.accumulatable   || '',
+        return_type:     r.return_type     || '',
+        confidence:      r.confidence      || '',
+        notes:           r.notes           || '',
+      };
+      newCandidates.push(normFromAutoLabelRow(r));
+    }
+
+    pending.llmSuggestions = suggestions;
+    pending.llmModelName   = f.name.replace(/\.csv$/i, '');
+
+    // If no candidates loaded yet, use the auto-label rows as the candidate list
+    if (!pending.candidates) {
+      pending.candidates = newCandidates;
+      updateStartBtn();
+    }
+
+    setStatus('st-autolabels',
+      `Loaded ${Object.keys(suggestions).length} LLM suggestions from ${f.name}`, 'ok');
+    setBtnOk('btn-autolabels');
+  } catch(e) {
+    setStatus('st-autolabels', `Parse error: ${e.message}`, 'err');
+  }
+});
+
+function setStatus(id, msg, type) {
+  const el = document.getElementById(id);
+  el.textContent = msg; el.className = `istatus ${type}`; el.style.display = msg ? '' : 'none';
+}
+
+function setBtnOk(id) { document.getElementById(id).classList.add('ok'); }
+
+function updateStartBtn() {
+  document.getElementById('start-btn').disabled = !pending.candidates;
+}
+
+// Path A: folder load
+document.getElementById('inp-folder').addEventListener('change', async function() {
+  const files = Array.from(this.files);
+  if (!files.length) return;
+  setStatus('st-folder','Loading…','inf');
+
+  // Collect image URLs
+  const imgs = buildImageUrlsFromFileList(files);
+
+  // Find debug_frames.json files and parse them
+  const jsonFiles = files.filter(f => f.name === 'debug_frames.json');
+  if (!jsonFiles.length) {
+    setStatus('st-folder','No debug_frames.json found in selected folder','err'); return;
+  }
+
+  let candidates = [];
+  let sessions = 0;
+  for (const jf of jsonFiles) {
+    try {
+      const text = await readFileText(jf);
+      const manifest = JSON.parse(text);
+      const rp = jf.webkitRelativePath || jf.name;
+      const parts = rp.split('/');
+      const sessionName = parts.length >= 2 ? parts[parts.length - 2] : (manifest.session || '');
+      const sname = manifest.session || sessionName;
+      for (const s of (manifest.samples || [])) {
+        candidates.push(normFromSample(s, sname));
+      }
+      sessions++;
+    } catch(e) { console.warn('Failed to parse', jf.name, e); }
+  }
+
+  pending.candidates = candidates;
+  pending.images = imgs;
+  S.importMeta = { source: 'folder', sessions, candidates: candidates.length, loadedAt: now() };
+
+  setStatus('st-folder', `Loaded ${sessions} sessions, ${candidates.length} frames, ${Object.keys(imgs).length} images`, 'ok');
+  setBtnOk('btn-folder');
+  updateStartBtn();
+});
+
+// Path B step 1: mining JSON
+document.getElementById('inp-mining').addEventListener('change', async function() {
+  const f = this.files[0]; if (!f) return;
+  setStatus('st-mining','Parsing…','inf');
+  try {
+    const text = await readFileText(f);
+    const data = JSON.parse(text);
+    let candidates;
+    if (Array.isArray(data)) {
+      candidates = data.map(normFromMiningRow);
+    } else if (data.samples) {
+      // single debug_frames.json
+      const sname = data.session || f.name;
+      candidates = (data.samples || []).map(s => normFromSample(s, sname));
+    } else if (data.reviews) {
+      setStatus('st-mining','This looks like a review export. Use the resume option instead.','err'); return;
+    } else {
+      setStatus('st-mining','Unrecognised JSON format','err'); return;
+    }
+    pending.candidates = candidates;
+    S.importMeta = { source: 'mining_json', file: f.name, candidates: candidates.length, loadedAt: now() };
+    setStatus('st-mining', `Loaded ${candidates.length} candidates from ${f.name}`, 'ok');
+    setBtnOk('btn-mining');
+    updateStartBtn();
+  } catch(e) {
+    setStatus('st-mining', `Parse error: ${e.message}`, 'err');
+  }
+});
+
+// Path B step 2: images folder
+document.getElementById('inp-images').addEventListener('change', function() {
+  const files = Array.from(this.files);
+  const imgs = buildImageUrlsFromFileList(files);
+  pending.images = imgs;
+  setStatus('st-mining', (document.getElementById('st-mining').textContent || '') +
+    ` | ${Object.keys(imgs).length} images loaded`, 'ok');
+  setBtnOk('btn-images');
+});
+
+// Resume
+document.getElementById('inp-resume').addEventListener('change', async function() {
+  const f = this.files[0]; if (!f) return;
+  setStatus('st-resume','Parsing…','inf');
+  try {
+    const text = await readFileText(f);
+    const data = JSON.parse(text);
+    if (!data.reviews) { setStatus('st-resume','Invalid review export JSON','err'); return; }
+    pending.resume = data.reviews;
+    const n = Array.isArray(data.reviews) ? data.reviews.length : Object.keys(data.reviews).length;
+    setStatus('st-resume', `Will merge ${n} prior annotations`, 'ok');
+    setBtnOk('btn-resume');
+  } catch(e) {
+    setStatus('st-resume', `Parse error: ${e.message}`, 'err');
+  }
+});
+
+// Start
+document.getElementById('start-btn').addEventListener('click', () => {
+  if (!pending.candidates) return;
+  S.candidates = pending.candidates;
+  Object.assign(S.imageUrls, pending.images || {});
+
+  // Merge LLM suggestions
+  if (pending.llmSuggestions) {
+    Object.assign(S.llmSuggestions, pending.llmSuggestions);
+    S.llmModelName = pending.llmModelName || '';
+  }
+
+  // Merge resume annotations
+  if (pending.resume) {
+    const revArr = Array.isArray(pending.resume) ? pending.resume : Object.values(pending.resume);
+    for (const r of revArr) {
+      if (r.session && r.frame_num !== undefined) {
+        S.reviews[frameKey(r.session, r.frame_num)] = r;
+      }
+    }
+  }
+
+  // Merge from localStorage
+  const saved = loadLS();
+  if (saved && saved.reviews) {
+    for (const [k, r] of Object.entries(saved.reviews)) {
+      if (!S.reviews[k]) S.reviews[k] = r;
+    }
+  }
+  if (saved && saved.llmSuggestions) {
+    for (const [k, sug] of Object.entries(saved.llmSuggestions)) {
+      if (!S.llmSuggestions[k]) S.llmSuggestions[k] = sug;
+    }
+    if (!S.llmModelName && saved.llmModelName) S.llmModelName = saved.llmModelName;
+  }
+
+  applyFilter();
+  selectFirstFiltered();
+  document.getElementById('import-screen').style.display = 'none';
+  document.getElementById('review-screen').style.display = 'flex';
+  document.getElementById('review-screen').style.flexDirection = 'column';
+  syncFilterControls();
+  renderAll();
+  saveLS();
+});
+
+// Restore from localStorage
+const saved = loadLS();
+if (saved && saved.candidates && saved.candidates.length) {
+  const lnk = document.getElementById('lnk-restore');
+  lnk.style.display = '';
+  lnk.onclick = () => {
+    S.candidates = saved.candidates;
+    S.reviews = saved.reviews || {};
+    S.filters = saved.filters || S.filters;
+    S.activeSession = S.filters.session || null;
+    S.sort = saved.sort || S.sort;
+    S.importMeta = saved.importMeta || {};
+    S.llmSuggestions = saved.llmSuggestions || {};
+    S.llmModelName   = saved.llmModelName   || '';
+    applyFilter();
+    selectFirstFiltered();
+    document.getElementById('import-screen').style.display = 'none';
+    document.getElementById('review-screen').style.display = 'flex';
+    document.getElementById('review-screen').style.flexDirection = 'column';
+    syncFilterControls();
+    renderAll();
+  };
+} else {
+  document.getElementById('lnk-restore').style.display = 'none';
+}
+
+// ─── Filter/sort event handlers ───────────────────────────
+document.getElementById('f-type').addEventListener('change', function() {
+  S.filters.type = this.value; applyFilter(); selectFirstFiltered(); renderAll(); saveLS();
+});
+document.getElementById('f-status').addEventListener('change', function() {
+  S.filters.status = this.value; applyFilter(); selectFirstFiltered(); renderAll(); saveLS();
+});
+document.getElementById('f-sort').addEventListener('change', function() {
+  S.sort = this.value; applyFilter(); selectFirstFiltered(); renderAll(); saveLS();
+});
+document.getElementById('f-score').addEventListener('input', function() {
+  S.filters.minScore = parseFloat(this.value);
+  document.getElementById('score-val').textContent = this.value;
+  applyFilter(); selectFirstFiltered(); renderAll(); saveLS();
+});
+
+// Table header sort
+document.querySelectorAll('#ftable thead th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    const colSort = { candidate_score:'score_desc', session:'session_asc', frame_num:'session_asc',
+      candidate_type:'score_desc', reason:'session_asc', nearest_human_points:'score_desc',
+      center_clear:'session_asc', _review_tag:'session_asc' };
+    S.sort = colSort[col] || 'score_desc';
+    document.getElementById('f-sort').value = S.sort;
+    applyFilter(); selectFirstFiltered(); renderAll();
+    th.classList.add('sorted');
+  });
+});
+
+// ─── Keyboard shortcuts ───────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (document.getElementById('review-screen').style.display === 'none') return;
+  const tag = e.target.tagName;
+  if (tag === 'TEXTAREA') return;
+  if (tag === 'INPUT' && e.target.type !== 'range') return;
+
+  switch (e.key) {
+    case 'j': case 'ArrowDown':  e.preventDefault(); App_navigate(1); break;
+    case 'k': case 'ArrowUp':    e.preventDefault(); App_navigate(-1); break;
+    case '1': App_setTag('human_overcall');     break;
+    case '2': App_setTag('true_human');         break;
+    case '3': App_setTag('structure_mislabel'); break;
+    case '4': App_setTag('floor_mislabel');     break;
+    case '5': App_setTag('uncertain');          break;
+    case '6': App_setTag('skip');               break;
+    case 'Enter': if (!e.repeat) App_applyAndNext(); break;
+    case 'e': if (!e.repeat) App_exportAll();   break;
+  }
+});
+
+// ─── App namespace (for onclick handlers in HTML) ─────────
+const App = {
+  selectPos:    App_selectPos,
+  navigate:     App_navigate,
+  setTag:         App_setTag,
+  setLabel:       App_setLabel,
+  setAcc:         App_setAcc,
+  setReturnType:  App_setReturnType,
+  setReviewScope: App_setReviewScope,
+  setConf:        App_setConf,
+  setNotes:       App_setNotes,
+  toggleSpan:   App_toggleSpan,
+  applyAndNext: App_applyAndNext,
+  applySpan:    App_applySpan,
+  filterSession: App_filterSession,
+  exportJSON:   App_exportJSON,
+  exportCSV:    App_exportCSV,
+  clearLS:      App_clearLS,
+  acceptLLM:    App_acceptLLM,
+  backToImport: () => {
+    document.getElementById('review-screen').style.display = 'none';
+    document.getElementById('import-screen').style.display = 'flex';
+  },
+};
+</script>
+</body>
+</html>

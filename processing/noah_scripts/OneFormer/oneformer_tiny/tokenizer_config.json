@@ -1,0 +1,33 @@
+{
+  "bos_token": {
+    "__type": "AddedToken",
+    "content": "<|startoftext|>",
+    "lstrip": false,
+    "normalized": true,
+    "rstrip": false,
+    "single_word": false
+  },
+  "eos_token": {
+    "__type": "AddedToken",
+    "content": "<|endoftext|>",
+    "lstrip": false,
+    "normalized": true,
+    "rstrip": false,
+    "single_word": false
+  },
+  "errors": "replace",
+  "model_max_length": 1000000000000000019884624838656,
+  "name_or_path": "shi-labs/oneformer_ade20k_swin_tiny",
+  "pad_token": "<|endoftext|>",
+  "processor_class": "OneFormerProcessor",
+  "special_tokens_map_file": null,
+  "tokenizer_class": "CLIPTokenizer",
+  "unk_token": {
+    "__type": "AddedToken",
+    "content": "<|endoftext|>",
+    "lstrip": false,
+    "normalized": true,
+    "rstrip": false,
+    "single_word": false
+  }
+}

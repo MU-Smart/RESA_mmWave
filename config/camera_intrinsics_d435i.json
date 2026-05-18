@@ -1,0 +1,25 @@
+{
+  "_note": "D435i intrinsics at the pipeline's recording resolution (640x360). Calibrated at 1280x720 from checkerboard images; K scaled by 0.5 for deployment. dist_coeffs are dimensionless and unchanged. Prefer session meta_data.json realsense_calibration.rgb when available.",
+  "_npz_source": "CALIBRATION/Preprocessing Scripts/archive/Spatial_Calibration/camera_intrinsics.npz",
+  "_calibration_width": 1280,
+  "_calibration_height": 720,
+  "width": 640,
+  "height": 360,
+  "K": [
+    [681.1330515932301, 0.0,               371.8425943994153],
+    [0.0,               679.5994001317399, 115.25388787001836],
+    [0.0,               0.0,               1.0               ]
+  ],
+  "K_1280x720": [
+    [1362.2661031864602, 0.0,               743.6851887988306],
+    [0.0,               1359.1988002634798, 230.50777574003672],
+    [0.0,               0.0,               1.0               ]
+  ],
+  "dist_coeffs": [
+    -0.5132266243084922,
+    6.088778241160198,
+    -0.0036906927493171415,
+    0.016100547661819797,
+    -35.09708723510832
+  ]
+}
