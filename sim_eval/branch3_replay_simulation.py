@@ -145,6 +145,9 @@ _BUCKET_TO_CLASS: dict[str, str] = {
     "person":    "human",
 }
 
+
+# note: double-check if floor range-gate geometry is effective in eliminating
+#       floor returns 
 MIN_VALID_Z = -0.851
 MIN_RANGE_M = 0.3
 MAX_RANGE_M = 5.0
