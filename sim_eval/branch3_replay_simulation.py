@@ -86,19 +86,20 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 # ---------------------------------------------------------------------------
 
 THIS_DIR     = Path(__file__).resolve().parent
-PIPELINE_DIR = THIS_DIR
-BRANCH3_DIR  = THIS_DIR
-REPO_ROOT    = PIPELINE_DIR.parents[1]
+REPO_ROOT    = THIS_DIR.parent
+PIPELINE_DIR = REPO_ROOT / "branch2"
+BRANCH1_DIR  = REPO_ROOT / "branch1"
+BRANCH3_DIR  = REPO_ROOT / "branch3"
 DATA_DIR     = REPO_ROOT / "LLM_ML" / "data" / "jetson_pull_2026-04-22"
-DEFAULT_CFG_PATH  = THIS_DIR / "config" / "profile_objdet.cfg"
-DEFAULT_UNET_PT   = THIS_DIR / "models" / "unet_best_model.pt"
-DEFAULT_EXTRINSICS_JSON = THIS_DIR / "config" / "radar_camera_extrinsics.json"
+DEFAULT_CFG_PATH  = REPO_ROOT / "config" / "profile_objdet.cfg"
+DEFAULT_UNET_PT   = REPO_ROOT / "models" / "unet_best_model.pt"
+DEFAULT_EXTRINSICS_JSON = REPO_ROOT / "config" / "radar_camera_extrinsics.json"
 
 MODEL_PT_CANDIDATES = [
-    THIS_DIR / "models" / "3branch_best_model.pt",
+    REPO_ROOT / "models" / "3branch_best_model.pt",
 ]
 
-for path in (REPO_ROOT, PIPELINE_DIR, PIPELINE_DIR / "perception", PIPELINE_DIR / "models"):
+for path in (REPO_ROOT, PIPELINE_DIR, BRANCH1_DIR, BRANCH3_DIR, REPO_ROOT / "perception", REPO_ROOT / "models"):
     sp = str(path)
     if sp not in sys.path:
         sys.path.insert(0, sp)
@@ -116,13 +117,12 @@ def _load_mod(alias: str, filepath: Path):
     return mod
 
 
-_load_mod("branch_frame_encoder", THIS_DIR / "models" / "3branch_frame_encoder.py")
-_load_mod("branch_common",       THIS_DIR / "models" / "3branch_common.py")
-_map_mod  = _load_mod("branch_map_builder",   THIS_DIR / "scene_pipeline.py")
-_nav_mod  = _load_mod("branch_nav_decision",  THIS_DIR / "scene_pipeline.py")
-_agg_mod  = _load_mod("branch_scene_agg",     THIS_DIR / "scene_pipeline.py")
-_llm_mod  = _load_mod("branch_llm_guidance",  THIS_DIR / "guidance.py")
-branch3_unet = _load_mod("branch3_unet",      THIS_DIR / "models" / "branch3_unet.py")
+_load_mod("branch_frame_encoder", BRANCH1_DIR / "models" / "kpconv" / "3branch_frame_encoder.py")
+_map_mod  = _load_mod("branch_map_builder",   PIPELINE_DIR / "scene_pipeline.py")
+_nav_mod  = _load_mod("branch_nav_decision",  PIPELINE_DIR / "scene_pipeline.py")
+_agg_mod  = _load_mod("branch_scene_agg",     PIPELINE_DIR / "scene_pipeline.py")
+_llm_mod  = _load_mod("branch_llm_guidance",  BRANCH3_DIR / "guidance.py")
+branch3_unet = _load_mod("branch3_unet",      BRANCH3_DIR / "branch3_unet.py")
 
 MapBuilder           = _map_mod.MapBuilder
 compute_nav_decision = _nav_mod.compute_nav_decision

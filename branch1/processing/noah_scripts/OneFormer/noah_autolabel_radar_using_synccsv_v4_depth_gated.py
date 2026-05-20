@@ -53,7 +53,7 @@ import pandas as pd
 from tqdm import tqdm
 
 _DEFAULT_EXTRINSICS_JSON = (
-    Path(__file__).parents[2] / "jetson_nav_pipeline/config/radar_camera_extrinsics.json"
+    Path(__file__).resolve().parents[5] / "config" / "radar_camera_extrinsics.json"
 )
 _DEFAULT_DEPTH_SCALE = 0.001  # metres per raw uint16 unit (RealSense default)
 

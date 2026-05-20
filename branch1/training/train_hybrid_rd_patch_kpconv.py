@@ -20,7 +20,7 @@ THIS_FILE = Path(__file__).resolve()
 CANON_DIR = THIS_FILE.parent.parent
 REPO_ROOT = THIS_FILE.parents[2]
 PILLAR_MODEL_DIR = REPO_ROOT / "model_stuff" / "pillar_elongation_5class"
-JETSON_NAV_DIR = REPO_ROOT / "jetson_nav_pipeline"
+JETSON_NAV_DIR = REPO_ROOT
 for path in (CANON_DIR, REPO_ROOT, PILLAR_MODEL_DIR, JETSON_NAV_DIR, THIS_FILE.parent):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))

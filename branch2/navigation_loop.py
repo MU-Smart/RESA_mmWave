@@ -43,15 +43,18 @@ log = get_logger("Loop")
 
 _PIPELINE_DIR = Path(__file__).resolve().parent
 _PIPELINE_3BRANCH_DIR = _PIPELINE_DIR
+_REPO_ROOT = _PIPELINE_DIR.parent
+_BRANCH1_DIR = _REPO_ROOT / "branch1"
+_BRANCH3_DIR = _REPO_ROOT / "branch3"
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-OUTPUT_ROOT     = "/home/ryan/nav_sessions/"
-MMWAVE_CFG_PATH = "/home/ryan/xwr/profile_objdet.cfg"
-ML_MODEL_DIR    = "/home/ryan/xwr/ml_model"
-LLM_DIR         = "/home/ryan/xwr/llm"
+OUTPUT_ROOT     = os.environ.get("NAV_OUTPUT_ROOT", "/home/ryan/nav_sessions/")
+MMWAVE_CFG_PATH = os.environ.get("MMWAVE_CFG_PATH", str(_REPO_ROOT / "config" / "profile_objdet.cfg"))
+ML_MODEL_DIR    = os.environ.get("ML_MODEL_DIR", "/home/ryan/xwr/ml_model")
+LLM_DIR         = os.environ.get("LLM_DIR", "/home/ryan/xwr/llm")
 
 # ADC settings
 ADC_PFA     = 1e-2
@@ -64,7 +67,7 @@ NAV_PERCEPTION_MODE = os.environ.get("NAV_PERCEPTION_MODE", "pointcloud").strip(
 # Model checkpoint. Prefer the 3branch KPConv checkpoint, but fall back to the
 # last known working point-cloud checkpoint when the 3branch artifact has not
 # been synced to the Jetson yet.
-BRANCH3_MODEL_PT = str(_PIPELINE_DIR / "models" / "3branch_best_model.pt")
+BRANCH3_MODEL_PT = str(_REPO_ROOT / "models" / "3branch_best_model.pt")
 LEGACY_BRANCH3_MODEL_PT = os.path.join(ML_MODEL_DIR, "models", "3branch_best_model.pt")
 LEGACY_MODEL_PT  = os.path.join(ML_MODEL_DIR, "models", "84.pt")
 BEST_MODEL_PT    = os.path.join(ML_MODEL_DIR, "models", "best_model.pt")
@@ -90,7 +93,7 @@ HYBRID_RD_OVERWRITE_SIDECARS = os.environ.get("NAV_POINTCLOUD_RD_OVERWRITE_SIDEC
 # Branch 3 — optional BEVUNet free-space inference. It stays disabled at
 # runtime when the checkpoint is missing or sidecars are incompatible.
 UNET_ENABLED = os.environ.get("NAV_UNET_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
-UNET_PT = os.environ.get("NAV_UNET_PT", str(_PIPELINE_DIR / "models" / "unet_best_model.pt"))
+UNET_PT = os.environ.get("NAV_UNET_PT", str(_REPO_ROOT / "models" / "unet_best_model.pt"))
 UNET_SECTOR_AXIS = os.environ.get("NAV_UNET_SECTOR_AXIS", "columns")
 
 # LLM — WSL Ollama via reverse SSH tunnel (WSL:11434 → Jetson:11435)
@@ -99,8 +102,8 @@ LLM_MIN_WAIT = 8.0
 OLLAMA_HOST  = "http://127.0.0.1:11435"
 
 # Piper TTS
-PIPER_BIN   = Path("/home/ryan/miniconda3/envs/mmwave/bin/piper")
-PIPER_VOICE = Path("/home/ryan/piper_voices/en_US-lessac-medium.onnx")
+PIPER_BIN   = Path(os.environ.get("PIPER_BIN", "/home/ryan/miniconda3/envs/mmwave/bin/piper"))
+PIPER_VOICE = Path(os.environ.get("PIPER_VOICE", "/home/ryan/piper_voices/en_US-lessac-medium.onnx"))
 
 # Scene window — single session to avoid stale data
 SCENE_WINDOW = 3
@@ -133,9 +136,12 @@ MAP_UPDATE_MODE    = os.environ.get("NAV_MAP_UPDATE_MODE", "uniform")
 # Module path setup
 # =============================================================================
 
+sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_PIPELINE_DIR))
-sys.path.insert(0, str(_PIPELINE_DIR / "perception"))
-sys.path.insert(0, str(_PIPELINE_DIR / "models"))
+sys.path.insert(0, str(_BRANCH1_DIR))
+sys.path.insert(0, str(_BRANCH3_DIR))
+sys.path.insert(0, str(_REPO_ROOT / "perception"))
+sys.path.insert(0, str(_REPO_ROOT / "models"))
 sys.path.insert(0, ML_MODEL_DIR)
 sys.path.insert(0, LLM_DIR)
 

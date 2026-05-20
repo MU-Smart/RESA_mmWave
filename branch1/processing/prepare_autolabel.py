@@ -39,15 +39,15 @@ import numpy as np
 # ============================================================================
 
 THIS_DIR     = Path(__file__).resolve().parent
-DATA_ROOT    = THIS_DIR / "data" / "dataTraining"
+REPO_ROOT    = THIS_DIR.parents[2]
+DATA_ROOT    = REPO_ROOT / "data" / "dataTraining"
 AUTOLABEL_SCRIPT = (
     THIS_DIR
-    / "etc"
     / "noah_scripts"
     / "OneFormer"
     / "noah_autolabel_radar_using_synccsv_v4_bestmatch.py"
 )
-EXTRINSICS_JSON = THIS_DIR / "jetson_nav_pipeline/config/radar_camera_extrinsics.json"
+EXTRINSICS_JSON = REPO_ROOT / "config" / "radar_camera_extrinsics.json"
 HF_CONFIG    = Path(
     "/home/hullumdr/.cache/huggingface/hub"
     "/models--shi-labs--oneformer_ade20k_swin_tiny"
@@ -71,7 +71,7 @@ def _radar_cfg_path() -> Path:
     candidates.extend(
         [
             # Running from LLM_ML/prepare_autolabel.py.
-            THIS_DIR / "jetson_nav_pipeline" / "canon" / "config" / "profile_objdet.cfg",
+            REPO_ROOT / "config" / "profile_objdet.cfg",
             # Running from /content/work/code/prepare_autolabel.py.
             THIS_DIR / "canon" / "config" / "profile_objdet.cfg",
             # Running from canon/processing/prepare_autolabel.py.
@@ -86,8 +86,9 @@ def _radar_cfg_path() -> Path:
 def _add_adc_module_paths() -> None:
     candidates = [
         # Running from LLM_ML/prepare_autolabel.py.
-        THIS_DIR / "etc",
-        THIS_DIR / "jetson_nav_pipeline" / "canon" / "perception",
+        REPO_ROOT,
+        REPO_ROOT / "perception",
+        REPO_ROOT / "models",
         # Running from /content/work/code/prepare_autolabel.py.
         THIS_DIR / "canon" / "perception",
         # Running from canon/processing/prepare_autolabel.py.

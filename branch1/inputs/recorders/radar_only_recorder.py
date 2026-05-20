@@ -41,6 +41,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from nav_logger import get_logger
 log = get_logger("Recorder")
 
@@ -48,8 +52,8 @@ log = get_logger("Recorder")
 # CONFIGURATION — edit these
 # =============================================================================
 
-OUTPUT_ROOT        = "/home/ryan/nav_sessions/"
-MMWAVE_CFG_PATH    = "/home/ryan/xwr/profile_objdet.cfg"
+OUTPUT_ROOT        = os.environ.get("NAV_OUTPUT_ROOT", "/home/ryan/nav_sessions/")
+MMWAVE_CFG_PATH    = os.environ.get("MMWAVE_CFG_PATH", str(_REPO_ROOT / "config" / "profile_objdet.cfg"))
 SESSION_DURATION_S = 1.5       # seconds of radar per session file
 
 # Real-time bias: keep only a bounded amount of unread raw radar frames.

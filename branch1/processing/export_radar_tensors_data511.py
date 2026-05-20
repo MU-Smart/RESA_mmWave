@@ -19,9 +19,9 @@ import os
 from pathlib import Path
 
 THIS_FILE = Path(__file__).resolve()
-CANON_ROOT = THIS_FILE.parents[1]
-IO_ROOT = THIS_FILE.parents[4] if len(THIS_FILE.parents) > 4 else CANON_ROOT
-for path in (CANON_ROOT, IO_ROOT, IO_ROOT / "LLM_ML" / "jetson_nav_pipeline" / "canon"):
+BRANCH1_ROOT = THIS_FILE.parents[1]
+REPO_ROOT = THIS_FILE.parents[2]
+for path in (REPO_ROOT, BRANCH1_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -29,7 +29,7 @@ import numpy as np
 
 from models.hybrid_rd_runtime import export_session_sidecars, RuntimeRDPatchConfig
 
-CFG_PATH = Path("LLM_ML/jetson_nav_pipeline/canon/config/profile_objdet.cfg")
+CFG_PATH = REPO_ROOT / "config" / "profile_objdet.cfg"
 DATA_ROOT = Path(os.environ.get("RADAR_TENSOR_PROCESSING_ROOT", "LLM_ML/data/data5-11"))
 SESSION_PREFIX = os.environ.get("RADAR_TENSOR_SESSION_PREFIX", "session_2026-05-11_")
 FRAME_NUMBER_OFFSET = 0

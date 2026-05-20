@@ -14,6 +14,10 @@ import threading
 from pathlib import Path
 from typing import Any, Tuple
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from scene_pipeline import get_logger, m_to_ft, azimuth_sector
 
 log = get_logger("Guidance")
