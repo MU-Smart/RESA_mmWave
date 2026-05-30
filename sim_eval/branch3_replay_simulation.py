@@ -16,21 +16,20 @@ Input note:
   checkpoints are no longer accepted here.
 
 Updated to use the current 3branch Jetson implementation:
-  - Imports from 3branch_map_builder, 3branch_nav_decision,
-    3branch_scene_aggregator, 3branch_llm_guidance, 3branch_unet
-  - L1 geo-floor threshold: y < 5.0m, z < 0.20m, |doppler| < 1.5 m/s
-  - L2 blocking z-floor:    z > -0.85m (valid point-cloud lower bound)
-  - L3 blocking y-ceiling:  y < 2.0m
-  - Doppler-aware blocking weights match the current live loop.
+  - Imports canonical modules via config/config.py.
+  - Uses branch2.navigation_config.NavigationConfig for model, cfg, map,
+    geo-floor, blocking, and Branch 3 U-Net settings.
+  - Navigation behavior is not CLI-overridable; replay CLI flags only select
+    input sessions and output/debug artifacts.
   - MapBuilder is a daemon Thread; push_classified_points is non-blocking.
     Replay calls _queue.join() after each push to maintain synchronous
     semantics for per-frame anomaly queries.
 
 Pipeline per frame (mirrors 3branch_navigation_loop.py):
   1. Branch 1 validation: MapBuilder persist_score lookup before update
-  2. Geo floor correction       (L1: y < 5.0m, z < 0.20m)
+  2. Geo floor correction       (from NavigationConfig)
   3. MapBuilder.push_classified_points  (joined synchronously)
-  4. Doppler-aware blocking detection (L2: z > -0.85m, L3: y < 2.0m)
+  4. Canonical blocking override (from NavigationConfig)
   5. MapBuilder.query_anomalies -> scene["map_anomalies"]
   6. Branch 3 scene["unet_freespace"] from the same companion
      <session>_radar_tensors.npz and U-Net checkpoint path used by the live loop
@@ -62,9 +61,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import copy
 import csv
-import importlib.util
+import importlib
 import io
 import json
 import math
@@ -87,49 +85,41 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 THIS_DIR     = Path(__file__).resolve().parent
 REPO_ROOT    = THIS_DIR.parent
-PIPELINE_DIR = REPO_ROOT / "branch2"
-BRANCH1_DIR  = REPO_ROOT / "branch1"
-BRANCH3_DIR  = REPO_ROOT / "branch3"
-DATA_DIR     = REPO_ROOT / "LLM_ML" / "data" / "jetson_pull_2026-04-22"
-DEFAULT_CFG_PATH  = REPO_ROOT / "config" / "profile_objdet.cfg"
-DEFAULT_UNET_PT   = REPO_ROOT / "models" / "unet_best_model.pt"
-DEFAULT_EXTRINSICS_JSON = REPO_ROOT / "config" / "radar_camera_extrinsics.json"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-MODEL_PT_CANDIDATES = [
-    REPO_ROOT / "models" / "3branch_best_model.pt",
-]
-
-for path in (REPO_ROOT, PIPELINE_DIR, BRANCH1_DIR, BRANCH3_DIR, REPO_ROOT / "perception", REPO_ROOT / "models"):
-    sp = str(path)
-    if sp not in sys.path:
-        sys.path.insert(0, sp)
-
-
-# ---------------------------------------------------------------------------
-# Importlib loader for 3branch_* modules
-# ---------------------------------------------------------------------------
-
-def _load_mod(alias: str, filepath: Path):
-    spec = importlib.util.spec_from_file_location(alias, str(filepath))
-    mod  = importlib.util.module_from_spec(spec)
-    sys.modules[alias] = mod
-    spec.loader.exec_module(mod)
-    return mod
+from branch2.navigation_config import (
+    BRANCH3_REPLAY_CONFIG,
+    NavigationConfig,
+    validate_branch3_replay_config,
+)
+from config.config import (
+    DIRECTNESS_RUNTIME_MODULE,
+    EXTRINSICS_PATH,
+    GUIDANCE_MODULE,
+    REPLAY_DATA_DIR_DEFAULT,
+    SCENE_PIPELINE_MODULE,
+    install_import_paths,
+)
 
 
-_load_mod("branch_frame_encoder", BRANCH1_DIR / "models" / "kpconv" / "3branch_frame_encoder.py")
-_map_mod  = _load_mod("branch_map_builder",   PIPELINE_DIR / "scene_pipeline.py")
-_nav_mod  = _load_mod("branch_nav_decision",  PIPELINE_DIR / "scene_pipeline.py")
-_agg_mod  = _load_mod("branch_scene_agg",     PIPELINE_DIR / "scene_pipeline.py")
-_llm_mod  = _load_mod("branch_llm_guidance",  BRANCH3_DIR / "guidance.py")
-branch3_unet = _load_mod("branch3_unet",      BRANCH3_DIR / "branch3_unet.py")
+install_import_paths(
+    ml_model_dir=BRANCH3_REPLAY_CONFIG.ml_model_dir,
+    llm_dir=BRANCH3_REPLAY_CONFIG.llm_dir,
+)
 
-MapBuilder           = _map_mod.MapBuilder
-compute_nav_decision = _nav_mod.compute_nav_decision
-aggregate_scene      = _agg_mod.aggregate_scene
-build_scene_description = _llm_mod.build_scene_description
+DATA_DIR = REPLAY_DATA_DIR_DEFAULT
+DEFAULT_EXTRINSICS_JSON = EXTRINSICS_PATH
+
+_scene_pipeline = importlib.import_module(SCENE_PIPELINE_MODULE)
+_guidance = importlib.import_module(GUIDANCE_MODULE)
+
+MapBuilder = _scene_pipeline.MapBuilder
+build_scene_description = _guidance.build_scene_description
 
 FRAME_INTERVAL_S = 0.1
+REPLAY_EGO_SMOOTHING_ALPHA = 0.35
+REPLAY_EGO_MAX_DT_S = 0.5
 
 _BUCKET_TO_CLASS: dict[str, str] = {
     "wall":      "structure",
@@ -146,81 +136,61 @@ _BUCKET_TO_CLASS: dict[str, str] = {
 }
 
 
+REPLAY_NAVIGATION_CONFIG = BRANCH3_REPLAY_CONFIG
+
+
 # note: double-check if floor range-gate geometry is effective in eliminating
 #       floor returns 
-MIN_VALID_Z = -0.851
-MIN_RANGE_M = 0.3
-MAX_RANGE_M = 5.0
+MIN_VALID_Z = REPLAY_NAVIGATION_CONFIG.min_valid_z
+MIN_RANGE_M = REPLAY_NAVIGATION_CONFIG.min_range_m
+MAX_RANGE_M = REPLAY_NAVIGATION_CONFIG.max_range_m
 
 _REPLAY_NAV_LOOP_MOD = None
-
-
-def _default_model_pt() -> Path:
-    for candidate in MODEL_PT_CANDIDATES:
-        if candidate.exists():
-            return candidate
-    return MODEL_PT_CANDIDATES[0]
+_REPLAY_MODEL_CONTEXT = None
+_REPLAY_MODEL_CONTEXT_KEY: tuple[str, str] | None = None
+_REPLAY_UNET_CONTEXT = None
+_REPLAY_UNET_CONTEXT_KEY: tuple[str, bool] | None = None
 
 
 def _load_replay_nav_loop():
-    """Load the canonical RD-patch Branch 1 inference helpers lazily."""
+    """Load the refactored live-loop module lazily."""
     global _REPLAY_NAV_LOOP_MOD
     if _REPLAY_NAV_LOOP_MOD is None:
-        os.environ.setdefault("NAV_LOG_DIR", "/tmp/branch3_replay_logs")
-        os.environ.setdefault("NAV_POINTCLOUD_RD_FRAME_OFFSET", "0")
-        pillar_model_dir = REPO_ROOT / "LLM_ML" / "model_stuff" / "pillar_elongation_5class"
-        pillar_model_dir_str = str(pillar_model_dir)
-        if pillar_model_dir_str not in sys.path:
-            sys.path.insert(0, pillar_model_dir_str)
-        _REPLAY_NAV_LOOP_MOD = _load_mod(
-            "navigation_loop",
-            THIS_DIR / "navigation_loop.py",
-        )
+        _REPLAY_NAV_LOOP_MOD = importlib.import_module("branch2.navigation_loop")
     return _REPLAY_NAV_LOOP_MOD
 
 
-def _configure_nav_loop_for_replay(
-    nav_loop,
-    *,
-    model_pt: Path,
-    mb: MapBuilder | None,
-) -> None:
-    """Point the live-loop inference helpers at local replay artifacts."""
-    model_pt = Path(model_pt).resolve()
-    if not model_pt.exists():
-        raise FileNotFoundError(
-            f"Branch 1 model checkpoint not found: {model_pt}. "
-            "Pass --model-pt or place 3branch_best_model.pt under 3branch/models/."
-        )
-    prev_model_pt = getattr(nav_loop, "MODEL_PT", None)
-    if str(prev_model_pt) != str(model_pt):
-        nav_loop._model = None
-        nav_loop._feat_means = None
-        nav_loop._feat_stds = None
-        nav_loop._bucket_order = None
-        nav_loop._feature_cols = None
-        if hasattr(nav_loop, "_uses_rd_patch"):
-            nav_loop._uses_rd_patch = False
-        if hasattr(nav_loop, "_has_acc_head"):
-            nav_loop._has_acc_head = False
-        if hasattr(nav_loop, "_model_pt_resolved"):
-            nav_loop._model_pt_resolved = False
-        if hasattr(nav_loop, "_unet_model"):
-            nav_loop._unet_model = None
-        if hasattr(nav_loop, "_unet_loaded"):
-            nav_loop._unet_loaded = False
-        if hasattr(nav_loop, "_unet_mod"):
-            nav_loop._unet_mod = None
-        if hasattr(nav_loop, "_unet_checkpoint"):
-            nav_loop._unet_checkpoint = None
-    nav_loop.MODEL_PT = str(model_pt)
-    if hasattr(nav_loop, "NAV_PERCEPTION_MODE"):
-        nav_loop.NAV_PERCEPTION_MODE = "pointcloud_rd_patch"
-    nav_loop.UNET_PT = str(DEFAULT_UNET_PT)
-    nav_loop.MMWAVE_CFG_PATH = str(DEFAULT_CFG_PATH)
-    nav_loop.ML_MODEL_DIR = str(THIS_DIR)
-    nav_loop.LLM_DIR = str(THIS_DIR)
-    nav_loop._map_builder = mb
+def _load_replay_model_context(nav_loop, config: NavigationConfig):
+    """Cache the live-loop model context for all replay sessions in one run."""
+    global _REPLAY_MODEL_CONTEXT, _REPLAY_MODEL_CONTEXT_KEY
+    key = (str(config.model_pt.resolve()), config.perception_mode)
+    if _REPLAY_MODEL_CONTEXT is None or _REPLAY_MODEL_CONTEXT_KEY != key:
+        _REPLAY_MODEL_CONTEXT = nav_loop.load_model(config)
+        _REPLAY_MODEL_CONTEXT_KEY = key
+    return _REPLAY_MODEL_CONTEXT
+
+
+def _load_replay_unet_context(nav_loop, config: NavigationConfig):
+    """Cache the live-loop Branch 3 U-Net context for all replay sessions in one run."""
+    global _REPLAY_UNET_CONTEXT, _REPLAY_UNET_CONTEXT_KEY
+    key = (str(config.unet.checkpoint.resolve()), bool(config.unet.enabled))
+    if _REPLAY_UNET_CONTEXT is None or _REPLAY_UNET_CONTEXT_KEY != key:
+        _REPLAY_UNET_CONTEXT = nav_loop.load_unet(config)
+        _REPLAY_UNET_CONTEXT_KEY = key
+    return _REPLAY_UNET_CONTEXT
+
+
+def _build_replay_runtime(nav_config: NavigationConfig, mb: MapBuilder):
+    nav_loop = _load_replay_nav_loop()
+    model_ctx = _load_replay_model_context(nav_loop, nav_config)
+    unet_ctx = _load_replay_unet_context(nav_loop, nav_config)
+    return nav_loop.NavigationRuntime(
+        config=nav_config,
+        processor=None,
+        model_ctx=model_ctx,
+        map_builder=mb,
+        unet_ctx=unet_ctx,
+    )
 
 
 def _load_extrinsics_summary(path: Path) -> dict:
@@ -246,7 +216,7 @@ def _load_rd_patch_checkpoint(model_pt: Path) -> dict:
     if not model_pt.exists():
         raise FileNotFoundError(
             f"Branch 1 RD-patch checkpoint not found: {model_pt}. "
-            "Pass --model-pt explicitly."
+            "Update the canonical navigation config; replay does not accept model CLI overrides."
         )
     ckpt = torch.load(model_pt, map_location="cpu", weights_only=False)
     if not bool(ckpt.get("uses_rd_patch", False)):
@@ -266,21 +236,32 @@ def _load_rd_patch_checkpoint(model_pt: Path) -> dict:
     return ckpt
 
 
-def _load_model_frames(csv_path: Path, *, model_pt: Path, mb: MapBuilder | None) -> list[tuple[int, list[dict]]]:
+def _load_model_frames(
+    csv_path: Path,
+    *,
+    runtime,
+) -> list[tuple[int, list[dict]]]:
     """Run the canonical RD-patch Branch 1 runtime and group predictions by frame."""
+    nav_config = runtime.config
     if csv_path.name == "labeled_radar_points_v4.csv":
         raise ValueError(
             "Replay requires the raw ADC-derived <session>.csv, not "
             "labeled_radar_points_v4.csv."
         )
-    _load_rd_patch_checkpoint(model_pt)
+    _load_rd_patch_checkpoint(nav_config.model_pt)
     nav_loop = _load_replay_nav_loop()
-    _configure_nav_loop_for_replay(
-        nav_loop,
-        model_pt=model_pt,
-        mb=mb,
-    )
-    points = nav_loop.run_inference_on_csv(str(csv_path), session_dir=str(csv_path.parent))
+    try:
+        points = nav_loop.run_inference_on_csv(runtime, str(csv_path), session_dir=str(csv_path.parent))
+    except Exception as exc:
+        raise RuntimeError(
+            "Branch 1 replay inference failed.\n"
+            f"csv_path={csv_path}\n"
+            f"session_dir={csv_path.parent}\n"
+            f"model_pt={nav_config.model_pt}\n"
+            f"perception_mode={nav_config.perception_mode}\n"
+            f"mmwave_cfg_path={nav_config.mmwave_cfg_path}\n"
+            f"error={type(exc).__name__}: {exc}"
+        ) from exc
     by_frame: dict[int, list[dict]] = {}
     for pt in points:
         p = dict(pt)
@@ -420,159 +401,8 @@ def _debug_snapshot_root(base_output: Path) -> Path:
     return base_output / "debug_frame_samples"
 
 
-# ---------------------------------------------------------------------------
-# Branch 2 — replay defaults tuned against April 28 sessions after restoring
-# full-frame timeline handling. The main lever is stronger floor recovery,
-# while keeping the more permissive blocking thresholds from the newer logic.
-# ---------------------------------------------------------------------------
-
-GEO_FLOOR_Z_THRESH  = 0.20
-GEO_FLOOR_Y_MAX     = 5.0
-GEO_FLOOR_RECLASSIFY_ENABLED = False
-BLOCKING_Z_FLOOR    = MIN_VALID_Z
-BLOCKING_Y_CEILING  = 2.0
-GEO_FLOOR_DOPPLER_SANITY_MPS = 1.5
-
-BLOCKING_DOPPLER_MIN_ANCHORS        = 6
-BLOCKING_DOPPLER_RANSAC_ITERS       = 24
-BLOCKING_DOPPLER_INLIER_MPS         = 0.18
-BLOCKING_DOPPLER_DYNAMIC_RESID_MPS  = 0.45
-BLOCKING_STATIC_WEIGHT              = 0.35
-BLOCKING_AMBIG_WEIGHT               = 0.70
-BLOCKING_DYNAMIC_WEIGHT             = 1.00
-BLOCKING_CENTER_EFFECTIVE_THRESH    = 5.0
-BLOCKING_SIDE_EFFECTIVE_THRESH      = 7.0
-BLOCKING_CENTER_DYNAMIC_THRESH      = 3
-BLOCKING_SIDE_DYNAMIC_THRESH        = 4
-
-
-def _apply_threshold_overrides(args) -> None:
-    global GEO_FLOOR_Z_THRESH
-    global GEO_FLOOR_Y_MAX
-    global GEO_FLOOR_RECLASSIFY_ENABLED
-    global BLOCKING_Z_FLOOR
-    global BLOCKING_Y_CEILING
-    global GEO_FLOOR_DOPPLER_SANITY_MPS
-    global BLOCKING_STATIC_WEIGHT
-    global BLOCKING_AMBIG_WEIGHT
-    global BLOCKING_DYNAMIC_WEIGHT
-    global BLOCKING_CENTER_EFFECTIVE_THRESH
-    global BLOCKING_SIDE_EFFECTIVE_THRESH
-    global BLOCKING_CENTER_DYNAMIC_THRESH
-    global BLOCKING_SIDE_DYNAMIC_THRESH
-
-    GEO_FLOOR_Z_THRESH = float(args.geo_floor_z)
-    GEO_FLOOR_Y_MAX = float(args.geo_floor_y_max)
-    GEO_FLOOR_RECLASSIFY_ENABLED = bool(args.enable_geo_floor_reclassify)
-    BLOCKING_Z_FLOOR = float(args.blocking_z_floor)
-    BLOCKING_Y_CEILING = float(args.blocking_y_ceiling)
-    GEO_FLOOR_DOPPLER_SANITY_MPS = float(args.geo_floor_doppler_max)
-    BLOCKING_STATIC_WEIGHT = float(args.blocking_static_weight)
-    BLOCKING_AMBIG_WEIGHT = float(args.blocking_ambig_weight)
-    BLOCKING_DYNAMIC_WEIGHT = float(args.blocking_dynamic_weight)
-    BLOCKING_CENTER_EFFECTIVE_THRESH = float(args.center_effective_thresh)
-    BLOCKING_SIDE_EFFECTIVE_THRESH = float(args.side_effective_thresh)
-    BLOCKING_CENTER_DYNAMIC_THRESH = int(args.center_dynamic_thresh)
-    BLOCKING_SIDE_DYNAMIC_THRESH = int(args.side_dynamic_thresh)
-
-
-def _apply_geo_floor_correction(points: list[dict]) -> tuple[list[dict], int]:
-    if not GEO_FLOOR_RECLASSIFY_ENABLED:
-        return list(points), 0
-
-    corrected, count = [], 0
-    for p in points:
-        if (
-            p.get("pred_class") in ("structure", "human")
-            and float(p.get("y", 99.0)) < GEO_FLOOR_Y_MAX
-            and float(p.get("z", 0.0)) < GEO_FLOOR_Z_THRESH
-            and abs(float(p.get("doppler", 0.0))) < GEO_FLOOR_DOPPLER_SANITY_MPS
-        ):
-            p = dict(p)
-            p["pred_class"] = "floor"
-            count += 1
-        corrected.append(p)
-    return corrected, count
-
-
-def _fit_static_doppler_model(struct_points: list[dict]) -> tuple[float, float] | None:
-    anchors = [
-        (
-            float(p.get("x", 0.0)),
-            float(p.get("y", 0.0)),
-            float(p.get("doppler", 0.0)),
-        )
-        for p in struct_points
-        if float(p.get("y", 0.0)) > 0.3
-        and abs(float(p.get("doppler", 99.0))) < 1.5
-    ]
-    if len(anchors) < BLOCKING_DOPPLER_MIN_ANCHORS:
-        return None
-
-    arr = np.asarray(anchors, dtype=np.float64)
-    xs = arr[:, 0]
-    ys = arr[:, 1]
-    dopplers = arr[:, 2]
-    az = np.arctan2(xs, np.maximum(ys, 0.1))
-    A = np.column_stack([np.sin(az), np.cos(az)])
-    b = -dopplers
-    n = len(b)
-    if n < 2:
-        return None
-
-    best_mask = None
-    best_inliers = 0
-    best_resid = np.inf
-    rng = np.random.default_rng(42)
-
-    for _ in range(BLOCKING_DOPPLER_RANSAC_ITERS):
-        idx = rng.choice(n, size=2, replace=False)
-        try:
-            v, _, _, _ = np.linalg.lstsq(A[idx], b[idx], rcond=None)
-        except Exception:
-            continue
-        residuals = np.abs(A @ v - b)
-        mask = residuals < BLOCKING_DOPPLER_INLIER_MPS
-        inliers = int(mask.sum())
-        median_resid = float(np.median(residuals[mask])) if inliers else np.inf
-        if inliers > best_inliers or (inliers == best_inliers and median_resid < best_resid):
-            best_mask = mask
-            best_inliers = inliers
-            best_resid = median_resid
-
-    if best_mask is None or best_inliers < BLOCKING_DOPPLER_MIN_ANCHORS:
-        return None
-
-    try:
-        v_refined, _, _, _ = np.linalg.lstsq(A[best_mask], b[best_mask], rcond=None)
-    except Exception:
-        return None
-    return float(v_refined[0]), float(v_refined[1])
-
-
-def _blocking_doppler_weights(xs: np.ndarray,
-                              ys: np.ndarray,
-                              dopplers: np.ndarray,
-                              static_model: tuple[float, float] | None) -> tuple[np.ndarray, np.ndarray]:
-    weights = np.ones(len(xs), dtype=np.float32)
-    dynamic_mask = np.zeros(len(xs), dtype=bool)
-    if static_model is None or len(xs) == 0:
-        return weights, dynamic_mask
-
-    vx, vy = static_model
-    az = np.arctan2(xs, np.maximum(ys, 0.1))
-    expected = -(vx * np.sin(az) + vy * np.cos(az))
-    residual = np.abs(dopplers - expected)
-
-    static_like = residual <= BLOCKING_DOPPLER_INLIER_MPS
-    dynamic_like = residual >= BLOCKING_DOPPLER_DYNAMIC_RESID_MPS
-    ambiguous = ~(static_like | dynamic_like)
-
-    weights[static_like] = BLOCKING_STATIC_WEIGHT
-    weights[ambiguous] = BLOCKING_AMBIG_WEIGHT
-    weights[dynamic_like] = BLOCKING_DYNAMIC_WEIGHT
-    dynamic_mask = dynamic_like
-    return weights.astype(np.float32), dynamic_mask
+# Rendering-only scale for directness residual vectors.
+RENDER_DOPPLER_DYNAMIC_RESID_MPS = 0.55
 
 
 # ---------------------------------------------------------------------------
@@ -665,152 +495,89 @@ class GhostPersistenceTracker:
         self._ghosts.clear()
 
 
-# ---------------------------------------------------------------------------
-# Doppler residual annotation
-# ---------------------------------------------------------------------------
+def _annotate_replay_directness(points: list[dict], frame_num: int) -> tuple[list[dict], dict, dict]:
+    directness_mod = importlib.import_module(DIRECTNESS_RUNTIME_MODULE)
+    DirectnessConfig = directness_mod.DirectnessConfig
+    estimate_ego_velocity = directness_mod.estimate_ego_velocity
+    annotate_directness = directness_mod.annotate_directness
+    build_directness_evidence = directness_mod.build_directness_evidence
 
-def _annotate_doppler_residuals(
-    points: list[dict],
-    static_model: tuple[float, float] | None,
-) -> None:
-    """Attach doppler_residual / doppler_expected fields in-place to structure and human points.
-
-    doppler_residual = measured_doppler − ego_expected_doppler.
-    Negative = target approaching faster than ego motion predicts (dynamic
-    inbound); positive = receding faster than predicted.  When no static ego
-    model is available the raw Doppler is used as the residual (ego = 0).
-    """
-    for pt in points:
-        if pt.get("pred_class") not in ("structure", "human"):
-            continue
-        px_v  = float(pt.get("x", 0.0))
-        py_v  = float(pt.get("y", 0.0))
-        dop_v = float(pt.get("doppler", 0.0))
-        if static_model is not None:
-            vx_m, vy_m = static_model
-            az_v    = float(np.arctan2(px_v, max(py_v, 0.1)))
-            exp_dop = -(vx_m * np.sin(az_v) + vy_m * np.cos(az_v))
-        else:
-            exp_dop = 0.0
-        signed_r = dop_v - exp_dop
-        pt["doppler_expected"]     = round(float(exp_dop), 3)
-        pt["doppler_residual"]     = round(float(signed_r), 3)
-        pt["doppler_residual_abs"] = round(abs(float(signed_r)), 3)
-        pt["doppler_ego_model"]    = static_model is not None
-
-
-def _apply_improved_blocking(points: list[dict], scene: dict) -> dict:
-    struct_pts = [p for p in points if p.get("pred_class") == "structure"]
-    if not struct_pts:
-        scene["doppler_residuals"] = {"ego_model_available": False, "n_structure_points": 0}
-        return scene
     try:
-        static_model = _fit_static_doppler_model(struct_pts)
-
-        # Annotate all structure and human points with signed Doppler residuals
-        # (used by BEV vector rendering and captured in debug JSON).
-        _annotate_doppler_residuals(points, static_model)
-        n_struct = len(struct_pts)
-        all_abs_resid = np.array(
-            [abs(float(p.get("doppler_residual", 0.0))) for p in struct_pts],
-            dtype=np.float32,
-        )
-        scene["doppler_residuals"] = {
-            "ego_model_available": static_model is not None,
-            "vx_mps": round(float(static_model[0]), 3) if static_model else None,
-            "vy_mps": round(float(static_model[1]), 3) if static_model else None,
-            "n_structure_points": n_struct,
-            "n_static":  int(np.sum(all_abs_resid <= BLOCKING_DOPPLER_INLIER_MPS)),
-            "n_dynamic": int(np.sum(all_abs_resid >= BLOCKING_DOPPLER_DYNAMIC_RESID_MPS)),
-            "residual_mean_mps": round(float(np.mean(all_abs_resid)), 3) if n_struct else 0.0,
-            "residual_max_mps":  round(float(np.max(all_abs_resid)),  3) if n_struct else 0.0,
-            "residual_p75_mps":  round(float(np.percentile(all_abs_resid, 75)), 3) if n_struct else 0.0,
-        }
-
-        arr = np.array(
-            [[p["x"], p["y"], p["z"], float(p.get("doppler", 0.0))]
-             for p in struct_pts],
-            dtype=np.float32,
-        )
-        xs, ys, zs, ds = arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
-        in_zone = (ys >= 0.5) & (ys < BLOCKING_Y_CEILING)
-        if not np.any(in_zone):
-            return scene
-        bx, by, bz, bd = xs[in_zone], ys[in_zone], zs[in_zone], ds[in_zone]
-        az    = np.degrees(np.arctan2(np.abs(bx), np.maximum(by, 0.1)))
-        above = bz > BLOCKING_Z_FLOOR
-        weights, dynamic = _blocking_doppler_weights(bx, by, bd, static_model)
-
-        center_mask = (az <= 20.0) & (np.abs(bx) < 0.5) & above
-        left_mask = (bx <= 0) & (az > 20.0) & (az <= 60.0) & above
-        right_mask = (bx > 0) & (az > 20.0) & (az <= 60.0) & above
-
-        c_cnt = int(np.sum(center_mask))
-        l_cnt = int(np.sum(left_mask))
-        r_cnt = int(np.sum(right_mask))
-        c_eff = float(np.sum(weights[center_mask]))
-        l_eff = float(np.sum(weights[left_mask]))
-        r_eff = float(np.sum(weights[right_mask]))
-        c_dyn = int(np.sum(dynamic[center_mask]))
-        l_dyn = int(np.sum(dynamic[left_mask]))
-        r_dyn = int(np.sum(dynamic[right_mask]))
-
-        scene.setdefault("blocking", {})
-        scene["blocking"]["center_points"] = c_cnt
-        scene["blocking"]["left_points"]   = l_cnt
-        scene["blocking"]["right_points"]  = r_cnt
-        scene["blocking"]["center_effective_points"] = round(c_eff, 1)
-        scene["blocking"]["left_effective_points"]   = round(l_eff, 1)
-        scene["blocking"]["right_effective_points"]  = round(r_eff, 1)
-        scene["blocking"]["center_dynamic_points"] = c_dyn
-        scene["blocking"]["left_dynamic_points"]   = l_dyn
-        scene["blocking"]["right_dynamic_points"]  = r_dyn
-        scene["blocking"]["source"] = "raw_structure_geometry"
-        scene["blocking"]["z_floor_m"] = BLOCKING_Z_FLOOR
-        scene["blocking"]["y_ceiling_m"] = BLOCKING_Y_CEILING
-        scene["open_directions_confidence"] = "observed"
-
-        center_blocked = (
-            c_eff >= BLOCKING_CENTER_EFFECTIVE_THRESH
-            or c_dyn >= BLOCKING_CENTER_DYNAMIC_THRESH
-        )
-        left_blocked = (
-            l_eff >= BLOCKING_SIDE_EFFECTIVE_THRESH
-            or l_dyn >= BLOCKING_SIDE_DYNAMIC_THRESH
-        )
-        right_blocked = (
-            r_eff >= BLOCKING_SIDE_EFFECTIVE_THRESH
-            or r_dyn >= BLOCKING_SIDE_DYNAMIC_THRESH
-        )
-        scene["open_directions"] = {
-            "left_clear":   not left_blocked,
-            "center_clear": not center_blocked,
-            "right_clear":  not right_blocked,
-        }
-        center_conf = (
-            "strong"
-            if c_eff >= 8.0 or c_dyn >= 4
-            else "weak"
-            if c_cnt > 0 or c_eff > 0.0 or c_dyn > 0
-            else "none"
-        )
-        scene["blocking"]["center_confidence"] = center_conf
-        scene["open_directions_confidence"] = (
-            "observed" if center_conf == "strong" else "weak" if center_conf == "weak" else "unknown"
-        )
-        scene.setdefault("evidence_channels", {}).setdefault("blocking", {})
-        scene["evidence_channels"]["blocking"].update({
-            "source": "raw_structure_geometry",
-            "confidence": center_conf,
-            "raw_points": c_cnt,
-            "effective_points": round(c_eff, 1),
-            "dynamic_points": c_dyn,
-            "left_effective_points": round(l_eff, 1),
-            "right_effective_points": round(r_eff, 1),
-        })
+        directness_config = DirectnessConfig()
+        ego_estimate = estimate_ego_velocity(points, directness_config)
+        annotated = annotate_directness(points, ego_estimate, directness_config)
+        evidence = build_directness_evidence(annotated, ego_estimate)
     except Exception as exc:
-        print(f"    [warn] Improved blocking failed: {exc}", flush=True)
-    return scene
+        raise RuntimeError(
+            "Directness annotation failed during replay frame processing.\n"
+            f"frame_num={int(frame_num)}\n"
+            f"point_count={len(points)}\n"
+            f"directness_module={DIRECTNESS_RUNTIME_MODULE}\n"
+            f"error={type(exc).__name__}: {exc}"
+        ) from exc
+
+    for point in annotated:
+        if "ego_doppler_residual_mps" not in point:
+            continue
+        residual = float(point.get("ego_doppler_residual_mps", 0.0))
+        point["doppler_expected"] = float(point.get("ego_expected_doppler_mps", 0.0))
+        point["doppler_residual"] = residual
+        point["doppler_residual_abs"] = abs(residual)
+        point["doppler_ego_model"] = bool(point.get("ego_reliable", False))
+
+    return annotated, ego_estimate, evidence
+
+
+def _doppler_residual_summary(points: list[dict], ego_estimate: dict) -> dict:
+    struct_pts = [point for point in points if point.get("pred_class") == "structure"]
+    residuals = np.asarray(
+        [abs(float(point.get("doppler_residual", 0.0))) for point in struct_pts],
+        dtype=np.float32,
+    )
+    return {
+        "ego_model_available": bool(ego_estimate.get("available", False)),
+        "vx_mps": round(float(ego_estimate.get("vx_mps", 0.0)), 3),
+        "vy_mps": round(float(ego_estimate.get("vy_mps", 0.0)), 3),
+        "n_structure_points": len(struct_pts),
+        "n_static": int(np.sum(residuals <= 0.25)) if len(residuals) else 0,
+        "n_dynamic": int(np.sum(residuals >= RENDER_DOPPLER_DYNAMIC_RESID_MPS)) if len(residuals) else 0,
+        "residual_mean_mps": round(float(np.mean(residuals)), 3) if len(residuals) else 0.0,
+        "residual_max_mps": round(float(np.max(residuals)), 3) if len(residuals) else 0.0,
+        "residual_p75_mps": round(float(np.percentile(residuals, 75)), 3) if len(residuals) else 0.0,
+    }
+
+
+def _build_rd_scalar_evidence(points: list[dict]) -> dict:
+    scalar_cols = ("rd_entropy", "rd_doppler_spread", "rd_anisotropy", "rd_peak_ratio")
+    points_with_scalars = [point for point in points if any(col in point for col in scalar_cols)]
+    by_class: dict[str, dict[str, list[float]]] = {}
+    for point in points_with_scalars:
+        cls = str(point.get("pred_class", "unknown"))
+        by_class.setdefault(cls, {col: [] for col in scalar_cols})
+        for col in scalar_cols:
+            if col in point:
+                by_class[cls][col].append(float(point[col]))
+
+    class_means = {
+        cls: {
+            col: round(float(np.mean(values)), 4)
+            for col, values in values_by_col.items()
+            if values
+        }
+        for cls, values_by_col in by_class.items()
+    }
+    return {
+        "available": bool(points_with_scalars),
+        "points_with_scalars": len(points_with_scalars),
+        "by_class": class_means,
+        "human_rd_entropy_mean": class_means.get("human", {}).get("rd_entropy"),
+        "human_rd_doppler_spread_mean": class_means.get("human", {}).get("rd_doppler_spread"),
+        "human_rd_anisotropy_mean": class_means.get("human", {}).get("rd_anisotropy"),
+    }
+
+
+def _point_key_sample(points: list[dict], *, limit: int = 3) -> list[list[str]]:
+    return [sorted(point.keys()) for point in points[:limit]]
 
 
 # ---------------------------------------------------------------------------
@@ -1251,8 +1018,8 @@ def _draw_doppler_vectors(
       yellow (#c9a500) – ambiguous
       red    (#e05252) – dynamic             |residual| ≥ dynamic threshold
 
-    Arrows are drawn for structure and human points that have been annotated
-    by _annotate_doppler_residuals.  Points with |residual| < min_residual_mps
+    Arrows are drawn for structure and human points annotated by the canonical
+    directness runtime. Points with |residual| < min_residual_mps
     are skipped to avoid visual clutter from near-static returns.
     """
     vecs: list[tuple[float, float, float, float, float]] = []
@@ -1285,7 +1052,7 @@ def _draw_doppler_vectors(
     mag_v = np.array([w[4] for w in vecs])
 
     # Normalise magnitude against the dynamic residual threshold for coloring.
-    norm_mag = np.clip(mag_v / max(BLOCKING_DOPPLER_DYNAMIC_RESID_MPS, 1e-6), 0.0, 1.0)
+    norm_mag = np.clip(mag_v / max(RENDER_DOPPLER_DYNAMIC_RESID_MPS, 1e-6), 0.0, 1.0)
 
     # Two-segment gradient: green → yellow (0–0.5) and yellow → red (0.5–1.0)
     colors = []
@@ -1328,89 +1095,6 @@ def _write_mp4(frames: list[np.ndarray], output_path: Path, fps: float = 10.0) -
     writer.release()
     print(f"  [video] {len(frames)} frames -> {output_path}  "
           f"({w}x{h} @ {fps}fps, ~{len(frames)/fps:.0f}s)", flush=True)
-
-
-# ---------------------------------------------------------------------------
-# Branch 3 replay helpers. This mirrors 3branch_navigation_loop.run_unet_freespace:
-# load the companion <session>_radar_tensors.npz, read rd_{frame_num}, run the
-# fixed checkpoint with no MapBuilder prior, and compute the same near-range
-# sector means.
-# ---------------------------------------------------------------------------
-
-_UNET_LEFT_COLS   = (0,   36)
-_UNET_CENTER_COLS = (36,  92)
-_UNET_RIGHT_COLS  = (92,  128)
-_UNET_RANGE_BINS  = (0,   64)
-
-
-def _unavailable_unet(reason: str = "live_unet_unavailable") -> dict:
-    return {"available": False, "center": 0.0, "left": 0.0, "right": 0.0,
-            "reason": reason, "source": "live_loop_equivalent"}
-
-
-def _load_live_npz_for_session(csv_path: Path):
-    npz_path = csv_path.parent / f"{csv_path.parent.name}_radar_tensors.npz"
-    if not npz_path.exists():
-        return None
-    try:
-        return np.load(str(npz_path), allow_pickle=False)
-    except Exception:
-        return None
-
-
-class LiveBranch3Runner:
-    def __init__(self, unet_pt: Path = DEFAULT_UNET_PT) -> None:
-        self.unet_pt = Path(unet_pt)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.ready = False
-        self.reason = ""
-        self.model = None
-        if not self.unet_pt.exists():
-            self.reason = "unet_checkpoint_not_found"
-            return
-        try:
-            _, model = branch3_unet.load_unet_checkpoint(
-                self.unet_pt, map_location=str(self.device))
-            model.to(self.device)
-            model.eval()
-            self.model = model
-            self.ready = True
-        except Exception as exc:
-            self.reason = f"unet_load_failed:{exc}"
-
-    def infer(self, npz_data, frame_num: int) -> dict:
-        if not self.ready or self.model is None:
-            return _unavailable_unet(self.reason or "unet_not_loaded")
-        rd_key = f"rd_{int(frame_num)}"
-        if npz_data is None or rd_key not in npz_data:
-            return _unavailable_unet("rd_tensor_missing")
-        try:
-            rd_cube = npz_data[rd_key]
-            inp = branch3_unet.rd_cube_to_input(rd_cube, use_prior=False)
-            inp = inp.to(self.device)
-            with torch.no_grad():
-                prob_map = self.model(inp).squeeze(0).detach().cpu().numpy()
-            if prob_map.shape != (128, 128):
-                return _unavailable_unet("unexpected_unet_output_shape")
-
-            r0, r1 = _UNET_RANGE_BINS
-            prob_near = prob_map[r0:r1, :]
-            l0, l1 = _UNET_LEFT_COLS
-            c0, c1 = _UNET_CENTER_COLS
-            rr0, rr1 = _UNET_RIGHT_COLS
-            left_prob = float(np.nanmean(prob_near[:, l0:l1]))
-            center_prob = float(np.nanmean(prob_near[:, c0:c1]))
-            right_prob = float(np.nanmean(prob_near[:, rr0:rr1]))
-            return {
-                "available": True,
-                "center": center_prob if np.isfinite(center_prob) else 0.0,
-                "left": left_prob if np.isfinite(left_prob) else 0.0,
-                "right": right_prob if np.isfinite(right_prob) else 0.0,
-                "source": "live_loop_equivalent",
-                "frame": int(frame_num),
-            }
-        except Exception as exc:
-            return _unavailable_unet(f"unet_inference_failed:{exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1569,17 +1253,17 @@ def _process_frame_3branch(
     mb: MapBuilder,
     *,
     npz_data,
-    branch3_runner: LiveBranch3Runner,
+    nav_runtime,
     frame_time_s: float | None = None,
     ego_trajectory: EgoTrajectoryState | None = None,
     ghost_tracker: GhostPersistenceTracker | None = None,
-    session_dir: Path | None = None,
 ) -> tuple[list[dict], dict, dict, dict]:
     # Mirror the live navigation loop: process the current radar frame only.
     # Temporal memory belongs in MapBuilder, not in a replay-only merged cloud.
     persist = _persist_summary(mb, raw_points)
 
-    corrected, _geo_count = _apply_geo_floor_correction(raw_points)
+    nav_loop = _load_replay_nav_loop()
+    corrected = nav_loop.apply_geo_floor_correction(raw_points, nav_runtime.config)
     branch1_input_feature_cols = (
         "ego_doppler_residual_mps",
         "ego_residual_abs_z",
@@ -1596,98 +1280,43 @@ def _process_frame_3branch(
             if col in pt:
                 pt[f"branch1_input_{col}"] = pt[col]
 
-    # Step 1 — Runtime ego-Doppler directness annotation (shadow mode)
+    corrected, _ego_est, _dir_evidence = _annotate_replay_directness(corrected, frame_num)
     try:
-        from perception.directness_runtime import (
-            DirectnessConfig,
-            estimate_ego_velocity as _estimate_ego_vel,
-            annotate_directness as _annotate_dir,
-            build_directness_evidence as _build_dir_evidence,
-        )
-        _dir_config = DirectnessConfig()
-        _ego_est = _estimate_ego_vel(corrected, _dir_config)
-        corrected = _annotate_dir(corrected, _ego_est, _dir_config)
-        _dir_evidence = _build_dir_evidence(corrected, _ego_est)
-        # Update ghost persistence tracker with current-frame ghost candidates
-        if ghost_tracker is not None:
-            ghost_tracker.update(corrected)
-    except Exception:
-        _ego_est = {"available": False, "vx_mps": 0.0, "vy_mps": 0.0, "speed_mps": 0.0,
-                    "n_candidate_points": 0, "n_static_points": 0, "residual_mad_mps": float("inf"),
-                    "inlier_fraction": 0.0, "sector_entropy": 0.0, "sector_coverage": 0.0, "p_ego": 0.0}
-        _dir_evidence = {}
+        corrected = nav_loop.annotate_points_for_map(nav_runtime, corrected)
+    except Exception as exc:
+        raise RuntimeError(
+            "Map-update evidence annotation failed during replay frame processing.\n"
+            f"frame_num={int(frame_num)}\n"
+            f"point_count={len(corrected)}\n"
+            f"map_update_mode={nav_runtime.config.map.update_mode}\n"
+            f"point_key_sample={_point_key_sample(corrected)}\n"
+            f"error={type(exc).__name__}: {exc}"
+        ) from exc
+    if ghost_tracker is not None:
+        ghost_tracker.update(corrected)
+    _rd_scalar_evidence = _build_rd_scalar_evidence(corrected)
 
-    # Step 3 — Local RD scalar feature extraction (debug mode)
-    _rd_scalar_evidence: dict = {"available": False, "points_with_scalars": 0}
-    if session_dir is not None and corrected:
-        try:
-            from models.hybrid_rd_runtime import (
-                RuntimeRDPatchConfig,
-                extract_patches_and_scalars_for_frame_df as _rd_scalars_for_df,
-            )
-            import pandas as _pd_rd
-            _rd_config = RuntimeRDPatchConfig()
-            _frame_df = _pd_rd.DataFrame([
-                {
-                    "range_bin": pt.get("range_bin", 0),
-                    "doppler_bin": pt.get("doppler_bin", 0),
-                }
-                for pt in corrected
-            ])
-            if "range_bin" in _frame_df.columns and "doppler_bin" in _frame_df.columns:
-                _patches, _scalars = _rd_scalars_for_df(
-                    _frame_df,
-                    session_dir=session_dir,
-                    frame_num=int(frame_num),
-                    config=_rd_config,
-                )
-                for i, (pt, sc) in enumerate(zip(corrected, _scalars)):
-                    for k, v in sc.items():
-                        pt[k] = v
-                # Per-frame summary by class
-                _by_cls: dict[str, dict[str, list]] = {}
-                for pt, sc in zip(corrected, _scalars):
-                    cls = str(pt.get("pred_class", "unknown"))
-                    _by_cls.setdefault(cls, {k: [] for k in sc})
-                    for k, v in sc.items():
-                        _by_cls[cls][k].append(v)
-                _cls_means: dict[str, dict[str, float]] = {}
-                for cls, col_lists in _by_cls.items():
-                    _cls_means[cls] = {
-                        k: round(float(sum(v) / len(v)), 4)
-                        for k, v in col_lists.items() if v
-                    }
-                _rd_scalar_evidence = {
-                    "available": True,
-                    "points_with_scalars": len(_scalars),
-                    "by_class": _cls_means,
-                    # Flat human summaries for HNM scoring
-                    "human_rd_entropy_mean": _cls_means.get("human", {}).get("rd_entropy"),
-                    "human_rd_doppler_spread_mean": _cls_means.get("human", {}).get("rd_doppler_spread"),
-                    "human_rd_anisotropy_mean": _cls_means.get("human", {}).get("rd_anisotropy"),
-                    "human_wheel_sideband_mean": _cls_means.get("human", {}).get("wheel_sideband_score_local"),
-                }
-        except Exception:
-            pass
-
-    ego_instant = mb.estimate_ego_velocity(corrected) if mb is not None else {
-        "available": False,
-        "vx_mps": 0.0,
-        "vy_mps": 0.0,
-        "speed_mps": 0.0,
-        "n_static_points": 0,
-        "n_candidate_points": 0,
-        "source": "unavailable",
-    }
+    try:
+        ego_instant = mb.estimate_ego_velocity(corrected) if mb is not None else {
+            "available": False,
+            "vx_mps": 0.0,
+            "vy_mps": 0.0,
+            "speed_mps": 0.0,
+            "n_static_points": 0,
+            "n_candidate_points": 0,
+            "source": "unavailable",
+        }
+    except Exception as exc:
+        raise RuntimeError(
+            "MapBuilder ego-velocity estimate failed during replay frame processing.\n"
+            f"frame_num={int(frame_num)}\n"
+            f"point_count={len(corrected)}\n"
+            f"error={type(exc).__name__}: {exc}"
+        ) from exc
     ego_velocity = (
         ego_trajectory.update(ego_instant, frame_time_s)
         if ego_trajectory is not None else ego_instant
     )
-
-    if corrected:
-        mb.push_classified_points(corrected)
-        # Drain the queue synchronously so anomaly queries see the update
-        mb._queue.join()
 
     _acc_evidence: dict = {"available": any("p_acc" in p for p in corrected)}
     if _acc_evidence["available"]:
@@ -1712,17 +1341,50 @@ def _process_frame_3branch(
             ),
         })
 
-    scene = aggregate_scene(corrected, window_frames=1, ego_velocity_mps=ego_velocity)
-    # Floor recovery is a semantic aid. It must not erase low-Z structure
-    # returns before the corridor-blocking geometry pass; April 28 point
-    # clouds use z=0 at radar height, so real blocking returns commonly sit
-    # below zero.
-    scene = _apply_improved_blocking(raw_points, scene)
-    scene["map_anomalies"]  = mb.query_anomalies(0.0, 1.0, radius_m=0.5)
-    scene["unet_freespace"] = branch3_runner.infer(npz_data, int(frame_num))
+    try:
+        scene = nav_loop.assemble_navigation_scene(
+            nav_runtime,
+            corrected,
+            window_frames=1,
+            ego_velocity_mps=ego_velocity,
+            join_map_update=True,
+            compute_decision=False,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Navigation scene assembly failed during replay frame processing.\n"
+            f"frame_num={int(frame_num)}\n"
+            f"point_count={len(corrected)}\n"
+            f"map_update_mode={nav_runtime.config.map.update_mode}\n"
+            f"point_key_sample={_point_key_sample(corrected)}\n"
+            f"error={type(exc).__name__}: {exc}"
+        ) from exc
+    scene["doppler_residuals"] = _doppler_residual_summary(corrected, _ego_est)
+    try:
+        nav_loop.attach_unet_freespace(
+            nav_runtime,
+            scene,
+            int(frame_num),
+            npz_data=npz_data,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Branch 3 U-Net scene attachment failed during replay frame processing.\n"
+            f"frame_num={int(frame_num)}\n"
+            f"unet_checkpoint={nav_runtime.config.unet.checkpoint}\n"
+            f"unet_enabled={nav_runtime.config.unet.enabled}\n"
+            f"point_count={len(corrected)}\n"
+            f"error={type(exc).__name__}: {exc}"
+        ) from exc
     scene.setdefault("evidence_channels", {}).setdefault("directness", {}).update(_dir_evidence)
     scene.setdefault("evidence_channels", {}).setdefault("accumulatability", {}).update(_acc_evidence)
     scene.setdefault("evidence_channels", {}).setdefault("rd_scalars", {}).update(_rd_scalar_evidence)
+    scene.setdefault("evidence_channels", {}).setdefault("blocking", {}).update({
+        "source": "navigation_loop.apply_blocking_override",
+        "center_points": scene.get("blocking", {}).get("center_points", 0),
+        "left_points": scene.get("blocking", {}).get("left_points", 0),
+        "right_points": scene.get("blocking", {}).get("right_points", 0),
+    })
     scene.setdefault("evidence_channels", {}).setdefault("map", {})
     scene["evidence_channels"]["map"].update({
         "available": True,
@@ -1751,7 +1413,18 @@ def _process_frame_3branch(
         "reason": scene["unet_freespace"].get("reason"),
     })
 
-    decision = compute_nav_decision(scene)
+    try:
+        decision = nav_loop.compute_nav_decision(scene)
+    except Exception as exc:
+        raise RuntimeError(
+            "Navigation decision computation failed during replay frame processing.\n"
+            f"frame_num={int(frame_num)}\n"
+            f"scene_keys={sorted(scene.keys())}\n"
+            f"blocking={scene.get('blocking')}\n"
+            f"open_directions={scene.get('open_directions')}\n"
+            f"unet_freespace={scene.get('unet_freespace')}\n"
+            f"error={type(exc).__name__}: {exc}"
+        ) from exc
     return corrected, scene, decision, persist
 
 
@@ -2473,10 +2146,6 @@ def main() -> None:
     src.add_argument("--sessions-dir", type=Path, default=DATA_DIR)
     src.add_argument("--session",      type=Path)
     src.add_argument("--csv",          type=Path)
-    parser.add_argument("--model-pt", type=Path, default=_default_model_pt(),
-                        help="Branch 1 RD-patch checkpoint.")
-    parser.add_argument("--unet-pt", type=Path, default=DEFAULT_UNET_PT,
-                        help="U-Net freespace checkpoint for Branch 3 (default: %(default)s).")
     parser.add_argument("--extrinsics-json", type=Path, default=DEFAULT_EXTRINSICS_JSON,
                         help="Radar-to-camera extrinsics metadata to record for evaluation provenance.")
     parser.add_argument("--max-sessions",       type=int, default=5)
@@ -2504,34 +2173,6 @@ def main() -> None:
     parser.add_argument("--no-video",    action="store_true")
     parser.add_argument("--no-color-video", action="store_true",
                         help="Disable color video compositing.")
-    parser.add_argument("--geo-floor-z", type=float, default=GEO_FLOOR_Z_THRESH)
-    parser.add_argument("--geo-floor-y-max", type=float, default=GEO_FLOOR_Y_MAX)
-    parser.add_argument("--geo-floor-doppler-max", type=float, default=GEO_FLOOR_DOPPLER_SANITY_MPS)
-    parser.add_argument("--enable-geo-floor-reclassify", action="store_true",
-                        help="Destructively relabel low static structure/human points as floor. Disabled by default for April 28 data.")
-    parser.add_argument("--blocking-z-floor", type=float, default=BLOCKING_Z_FLOOR)
-    parser.add_argument("--blocking-y-ceiling", type=float, default=BLOCKING_Y_CEILING)
-    parser.add_argument("--blocking-static-weight", type=float, default=BLOCKING_STATIC_WEIGHT)
-    parser.add_argument("--blocking-ambig-weight", type=float, default=BLOCKING_AMBIG_WEIGHT)
-    parser.add_argument("--blocking-dynamic-weight", type=float, default=BLOCKING_DYNAMIC_WEIGHT)
-    parser.add_argument("--center-effective-thresh", type=float, default=BLOCKING_CENTER_EFFECTIVE_THRESH)
-    parser.add_argument("--side-effective-thresh", type=float, default=BLOCKING_SIDE_EFFECTIVE_THRESH)
-    parser.add_argument("--center-dynamic-thresh", type=int, default=BLOCKING_CENTER_DYNAMIC_THRESH)
-    parser.add_argument("--side-dynamic-thresh", type=int, default=BLOCKING_SIDE_DYNAMIC_THRESH)
-    parser.add_argument("--empty-frame-mode", choices=("zero", "hold_last"), default="hold_last")
-    parser.add_argument("--continuous-map-across-sessions", action="store_true",
-                        help="Keep one MapBuilder across all replayed sessions. Default resets map state per session.")
-    parser.add_argument("--map-update-mode",
-                        choices=["uniform", "ego_only", "ego_directness", "learned_acc"],
-                        default="uniform",
-                        help="Map accumulation weighting mode: uniform (A0, default), ego_only (A1), "
-                             "ego_directness (A2). ego_directness suppresses low-directness ghost points "
-                             "from persistent map accumulation. learned_acc uses the optional Step 8 "
-                             "p_acc head when present.")
-    parser.add_argument("--ego-smoothing-alpha", type=float, default=0.35,
-                        help="Causal smoothing factor for radar ego velocity before Doppler compensation.")
-    parser.add_argument("--ego-max-dt-s", type=float, default=0.5,
-                        help="Maximum frame interval integrated into the replay ego trajectory.")
     parser.add_argument("--debug-frame-snapshots", action="store_true",
                         help="Save sampled rendered frames and a manifest JSON under the output tree.")
     parser.add_argument("--debug-frame-snapshot-stride", type=int, default=10,
@@ -2544,29 +2185,18 @@ def main() -> None:
                         help="Stable identifier for this evaluation run recorded in every exported row. "
                              "Auto-generated UUID if omitted.")
     args = parser.parse_args()
-    _apply_threshold_overrides(args)
+    nav_config = BRANCH3_REPLAY_CONFIG
+    validate_branch3_replay_config(nav_config)
 
     session_list = _session_list_from_args(args)
     for _name, csv_path in session_list:
         if not csv_path.exists():
             raise FileNotFoundError(csv_path)
-    _load_rd_patch_checkpoint(args.model_pt)
+    _load_rd_patch_checkpoint(nav_config.model_pt)
 
-    branch3_runner = LiveBranch3Runner(args.unet_pt)
     extrinsics_summary = _load_extrinsics_summary(args.extrinsics_json)
 
-    _map_update_mode = getattr(args, "map_update_mode", "uniform")
-
-    continuous_mb = None
-    if args.continuous_map_across_sessions:
-        continuous_path = Path(f"/tmp/branch3_replay_grid_{os.getpid()}_continuous.npz")
-        try:
-            continuous_path.unlink()
-        except FileNotFoundError:
-            pass
-        continuous_mb = MapBuilder(save_path=continuous_path, save_every=1_000_000,
-                                   map_update_mode=_map_update_mode)
-        continuous_mb.start()
+    _map_update_mode = nav_config.map.update_mode
 
     base_output = args.output
     debug_root = _debug_snapshot_root(base_output)
@@ -2591,8 +2221,8 @@ def main() -> None:
         "ui_style": args.ui_style,
         "frames": 0,
         "ego_motion_available_frames": 0,
-        "ego_smoothing_alpha": float(args.ego_smoothing_alpha),
-        "ego_max_dt_s": float(args.ego_max_dt_s),
+        "ego_smoothing_alpha": float(REPLAY_EGO_SMOOTHING_ALPHA),
+        "ego_max_dt_s": float(REPLAY_EGO_MAX_DT_S),
         "ego_trajectory_by_session": {},
         "branch3_available_frames": 0,
         "unet_disagree_frames": 0,
@@ -2610,17 +2240,25 @@ def main() -> None:
         "open_direction_counts": {},
         "debug_frame_snapshots": {},
         "output": str(args.output),
-        "cfg_path": str(DEFAULT_CFG_PATH),
-        "model_pt": str(args.model_pt),
-        "unet_pt": str(args.unet_pt),
+        "cfg_path": str(nav_config.mmwave_cfg_path),
+        "model_pt": str(nav_config.model_pt),
+        "unet_pt": str(nav_config.unet.checkpoint),
         "radar_camera_extrinsics": extrinsics_summary,
-        "real_unet_ready": bool(branch3_runner.ready),
-        "real_unet_reason": branch3_runner.reason or None,
+        "real_unet_ready": True,
+        "real_unet_reason": None,
         "debug_frame_snapshots_enabled": bool(args.debug_frame_snapshots),
         "debug_frame_snapshot_stride": int(args.debug_frame_snapshot_stride),
         "debug_frame_snapshot_root": str(debug_root),
-        "continuous_map_across_sessions": bool(args.continuous_map_across_sessions),
+        "continuous_map_across_sessions": False,
         "map_update_mode": _map_update_mode,
+        "navigation_config": {
+            "perception_mode": nav_config.perception_mode,
+            "map_update_mode": nav_config.map.update_mode,
+            "persist_score_source": nav_config.features.persist_score_source,
+            "geo_floor_enabled": nav_config.geo_floor.enabled,
+            "blocking_min_obstacle_z_m": nav_config.blocking.min_obstacle_z_m,
+            "blocking_max_y_m": nav_config.blocking.max_y_m,
+        },
         "run_id": None,
         "export_frame_predictions": None,
         "export_point_predictions": None,
@@ -2641,44 +2279,44 @@ def main() -> None:
           f"input_mode=rd_patch_model output={args.output}")
     print(f"session_selection={args.session_selection} "
           f"stride={args.session_stride} seed={args.session_seed}")
-    print(f"model_pt={args.model_pt}")
+    print(f"cfg_path={nav_config.mmwave_cfg_path}")
+    print(f"model_pt={nav_config.model_pt}")
+    print(f"unet_pt={nav_config.unet.checkpoint}")
     print("model input: raw ADC-derived <session>.csv files")
     print(f"extrinsics={args.extrinsics_json} "
           f"available={extrinsics_summary.get('available', False)}")
-    print(f"thresholds: geo_floor_y<{GEO_FLOOR_Y_MAX}m  "
-          f"geo_floor_z<{GEO_FLOOR_Z_THRESH}m  "
-          f"geo_floor_doppler<{GEO_FLOOR_DOPPLER_SANITY_MPS}m/s  "
-          f"geo_floor_reclass={'on' if GEO_FLOOR_RECLASSIFY_ENABLED else 'off'}  "
-          f"blocking_z>{BLOCKING_Z_FLOOR}m  blocking_y<{BLOCKING_Y_CEILING}m  "
-          f"doppler_static_weight={BLOCKING_STATIC_WEIGHT}")
+    geo = nav_config.geo_floor
+    blocking = nav_config.blocking
+    print(f"thresholds: geo_floor_y<{geo.max_y_m}m  "
+          f"geo_floor_z<{geo.max_z_m}m  "
+          f"geo_floor_doppler<{geo.max_abs_doppler_mps}m/s  "
+          f"geo_floor_reclass={'on' if geo.enabled else 'off'}  "
+          f"blocking_z>{blocking.min_obstacle_z_m}m  "
+          f"blocking_y<{blocking.max_y_m}m  "
+          f"blocking_center_thresh={blocking.center_clear_threshold}")
     print("=" * 72)
 
     guidance_every = max(1, int(args.guidance_interval_s / FRAME_INTERVAL_S))
     last_guidance  = "Analysing scene..."
-    last_semantic_state = None
 
     use_color_sync = False  # set per-session below
 
     for sess_idx, (session_name, csv_path) in enumerate(session_list, start=1):
-        if continuous_mb is not None:
-            mb = continuous_mb
-            map_mode = "continuous"
-        else:
-            map_path = Path(f"/tmp/branch3_replay_grid_{os.getpid()}_{sess_idx}.npz")
-            try:
-                map_path.unlink()
-            except FileNotFoundError:
-                pass
-            mb = MapBuilder(save_path=map_path, save_every=1_000_000,
-                            map_update_mode=_map_update_mode)
-            mb.start()
-            map_mode = "session_reset"
+        map_path = Path(f"/tmp/branch3_replay_grid_{os.getpid()}_{sess_idx}.npz")
+        try:
+            map_path.unlink()
+        except FileNotFoundError:
+            pass
+        mb = MapBuilder(save_path=map_path, save_every=1_000_000,
+                        map_update_mode=_map_update_mode)
+        mb.start()
+        nav_runtime = _build_replay_runtime(nav_config, mb)
+        map_mode = "session_reset"
 
         last_guidance = "Analysing scene..."
-        last_semantic_state = None
         ego_trajectory = EgoTrajectoryState(
-            alpha=args.ego_smoothing_alpha,
-            max_dt_s=args.ego_max_dt_s,
+            alpha=REPLAY_EGO_SMOOTHING_ALPHA,
+            max_dt_s=REPLAY_EGO_MAX_DT_S,
         )
         ghost_tracker = GhostPersistenceTracker()
 
@@ -2776,7 +2414,8 @@ def main() -> None:
             })
 
         session_dir = csv_path.parent
-        npz_data = _load_live_npz_for_session(csv_path)
+        nav_loop = _load_replay_nav_loop()
+        npz_data = nav_loop.load_unet_npz_for_session(session_dir, csv_path=csv_path)
 
         radar_ts     = _load_frame_timestamps(session_dir / f"{session_name}_radar_timestamps.csv")
         color_ts     = _load_frame_timestamps(session_dir / f"{session_name}_color_timestamps.csv")
@@ -2784,7 +2423,7 @@ def main() -> None:
         radar_times  = radar_ts[1] if radar_ts is not None else None
         color_times  = color_ts[1] if color_ts is not None else None
         predicted_frame_data = _load_model_frames(
-            csv_path, model_pt=args.model_pt, mb=mb)
+            csv_path, runtime=nav_runtime)
         frame_data = _align_frames_to_radar_timestamps(
             predicted_frame_data, radar_indices)
         source_frame_count = len(predicted_frame_data)
@@ -2824,7 +2463,7 @@ def main() -> None:
                     print(f"  [color] {vid.name} @ {color_fps:.2f}fps")
 
         def _process_radar_state(radar_idx: int, *, render_panel: bool) -> dict:
-            nonlocal last_guidance, last_semantic_state
+            nonlocal last_guidance
             frame_num, raw_pts = frame_data[radar_idx]
             radar_time_ms = int(frame_times[radar_idx]) if frame_times is not None and radar_idx < len(frame_times) else None
             frame_time_s = (
@@ -2834,34 +2473,12 @@ def main() -> None:
             corrected, scene, decision, persist = _process_frame_3branch(
                 raw_pts, int(frame_num), mb,
                 npz_data=npz_data,
-                branch3_runner=branch3_runner,
+                nav_runtime=nav_runtime,
                 frame_time_s=frame_time_s,
                 ego_trajectory=ego_trajectory,
                 ghost_tracker=ghost_tracker,
-                session_dir=session_dir,
             )
             reused_semantics = False
-            if (
-                args.empty_frame_mode == "hold_last"
-                and not corrected
-                and last_semantic_state is not None
-            ):
-                fallback_scene = copy.deepcopy(last_semantic_state["scene"])
-                fallback_scene["unet_freespace"] = scene.get("unet_freespace", {})
-                fallback_scene["map_anomalies"] = scene.get("map_anomalies", {})
-                fallback_scene["confidence"] = "low"
-                fallback_scene["open_directions_confidence"] = "unknown"
-                scene = fallback_scene
-                decision = compute_nav_decision(scene)
-                persist = last_semantic_state["persist"]
-                corrected = last_semantic_state["corrected"]
-                reused_semantics = True
-            elif corrected:
-                last_semantic_state = {
-                    "scene": copy.deepcopy(scene),
-                    "persist": persist,
-                    "corrected": corrected,
-                }
 
             _update_stats(stats, counts, scene, decision, persist)
             guidance_fired = (radar_idx % guidance_every) == 0

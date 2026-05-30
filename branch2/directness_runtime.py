@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# author: Demetrius Hullum Scott
 """Runtime ego-Doppler directness annotation for shadow-mode integration.
 
 Annotates classified radar points with ego-Doppler residual statistics, per-point

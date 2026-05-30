@@ -1,10 +1,8 @@
-"""Motion-aware scene aggregation helpers.
-
-This module is intentionally standalone. It can wrap the existing
-``3branch_scene_aggregator.aggregate_scene`` without changing the live navigation
-loop. The first integration target is replay/simulation, where we can compare
-the current current-frame aggregation against a motion-compensated temporal
-window.
+# author: Demetrius Hullum Scott
+"""
+motion-aware scene aggregation helpers. 
+integrates into replay/simulation scripts, comparing current-frame aggregation
+against motion-compensated temporal window.
 """
 
 from __future__ import annotations

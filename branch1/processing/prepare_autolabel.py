@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib
 import json
 import struct
 import os
@@ -40,6 +41,11 @@ import numpy as np
 
 THIS_DIR     = Path(__file__).resolve().parent
 REPO_ROOT    = THIS_DIR.parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from config.config import ADC_TO_POINTCLOUD_MODULE
+
 DATA_ROOT    = REPO_ROOT / "data" / "dataTraining"
 AUTOLABEL_SCRIPT = (
     THIS_DIR
@@ -214,7 +220,7 @@ def radar_timestamps_from_bin(bin_path: Path) -> list[int]:
 
 def generate_radar_csv(session_dir: Path, processor, dry_run: bool) -> Path | None:
     """Generate {session}.csv if it doesn't already exist. Returns CSV path."""
-    import adc_to_pointcloud_v6 as v6
+    v6 = importlib.import_module(ADC_TO_POINTCLOUD_MODULE)
 
     preferred = session_dir / f"{session_dir.name}.csv"
     if preferred.exists():
@@ -447,7 +453,7 @@ def main() -> int:
         print(f"Building radar processor from {RADAR_CFG} …")
         sys.path.insert(0, str(THIS_DIR))
         _add_adc_module_paths()
-        import adc_to_pointcloud_v6 as v6
+        v6 = importlib.import_module(ADC_TO_POINTCLOUD_MODULE)
         if not RADAR_CFG.exists():
             print(f"ERROR: radar cfg not found: {RADAR_CFG}")
             return 1

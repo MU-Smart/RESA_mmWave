@@ -1,2 +1,0 @@
-"""KPConv frame encoder modules."""
-

@@ -29,6 +29,7 @@ Ctrl+C stops cleanly — the current session is finalized before exit.
 """
 
 import csv
+import importlib
 import json
 import os
 import queue
@@ -45,7 +46,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from nav_logger import get_logger
+from config.config import SCENE_PIPELINE_MODULE, install_import_paths
+
+install_import_paths()
+get_logger = importlib.import_module(SCENE_PIPELINE_MODULE).get_logger
 log = get_logger("Recorder")
 
 # =============================================================================
