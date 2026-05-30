@@ -35,9 +35,9 @@ from scipy.spatial.transform import Rotation, Slerp
 
 THIS_FILE = Path(__file__).resolve()
 REPO_ROOT = THIS_FILE.parents[3]
-DEFAULT_STATIC_PRIOR = REPO_ROOT / "LLM_ML/jetson_nav_pipeline/config/radar_camera_extrinsics.json"
-DEFAULT_ADC_SCRIPT = REPO_ROOT / "LLM_ML/jetson_nav_pipeline/3branch/3branch_adc_to_pointcloud.py"
-DEFAULT_ADC_CFG = REPO_ROOT / "LLM_ML/jetson_nav_pipeline/3branch/profile_objdet.cfg"
+DEFAULT_STATIC_PRIOR = REPO_ROOT / "config" / "radar_camera_extrinsics.json"
+DEFAULT_ADC_SCRIPT = REPO_ROOT / "branch1" / "processing" / "adc_to_pointcloud_v6.py"
+DEFAULT_ADC_CFG = REPO_ROOT / "config" / "profile_objdet.cfg"
 DEFAULT_OUTPUT_DIR = THIS_FILE.parent / "results"
 
 

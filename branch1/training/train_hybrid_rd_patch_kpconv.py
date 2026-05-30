@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -16,23 +15,20 @@ import torch.nn.functional as F
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, precision_recall_fscore_support, roc_auc_score
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-THIS_FILE = Path(__file__).resolve()
-CANON_DIR = THIS_FILE.parent.parent
-REPO_ROOT = THIS_FILE.parents[2]
-PILLAR_MODEL_DIR = REPO_ROOT / "model_stuff" / "pillar_elongation_5class"
-JETSON_NAV_DIR = REPO_ROOT / "jetson_nav_pipeline"
-for path in (CANON_DIR, REPO_ROOT, PILLAR_MODEL_DIR, JETSON_NAV_DIR, THIS_FILE.parent):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+# import path settings from config.config (includes load_mod helper)
+from config.config import REPO_ROOT, load_mod
 
-from models.hybrid_rd_model import RDPatchTemporalSegmenter
-from models.hybrid_rd_temporal_dataset import (
-    HybridRDTemporalEvalDataset,
-    HybridRDTemporalTrainDataset,
-    hybrid_rd_eval_collate_fn,
-)
-from models.radar_3dgcnn_common_kpconv import KPConvTemporalSegmenter
 
+hybrid_rd_model = load_mod("hybrid_rd_model", "branch1/models/hybrid_rd/hybrid_rd_model.py")
+RDPatchTemporalSegmenter = hybrid_rd_model.RDPatchTemporalSegmenter
+
+hybrid_rd_ds = load_mod("hybrid_rd_temporal_dataset", "branch1/models/hybrid_rd/hybrid_rd_temporal_dataset.py")
+HybridRDTemporalEvalDataset = hybrid_rd_ds.HybridRDTemporalEvalDataset
+HybridRDTemporalTrainDataset = hybrid_rd_ds.HybridRDTemporalTrainDataset
+hybrid_rd_eval_collate_fn = hybrid_rd_ds.hybrid_rd_eval_collate_fn
+
+kpconv_mod = load_mod("radar_3dgcnn_common_kpconv", "branch1/models/3dgcnn/radar_3dgcnn_common_kpconv.py")
+KPConvTemporalSegmenter = kpconv_mod.KPConvTemporalSegmenter
 
 BASE_FEATURE_COLS = [
     "x", "y", "z",

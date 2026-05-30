@@ -5,16 +5,23 @@
 # 1. fast_guidance — rule-based fallback guidance
 # =========================================================================
 
-import os
+import importlib
 import sys
 import time
-import json
 import subprocess
 import threading
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Tuple
 
-from scene_pipeline import get_logger, m_to_ft, azimuth_sector
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from config.config import SCENE_PIPELINE_MODULE
+
+
+_scene_pipeline = importlib.import_module(SCENE_PIPELINE_MODULE)
+get_logger = _scene_pipeline.get_logger
 
 log = get_logger("Guidance")
 
@@ -32,13 +39,14 @@ class FastGuidanceEngine:
         if now - self._last_guidance < self._min_interval:
             return self._last_text
 
-        decision = scene.get("decision", {})
-        action = str(decision.get("primary_action", "continue_straight"))
-        reason = str(decision.get("reason", "clear_path"))
-        direction = str(decision.get("best_direction", "center"))
-        urgency = str(decision.get("urgency", "none"))
+        decision = _decision_or_fail_closed(scene, scene.get("decision", {}))
+        action = str(decision.get("primary_action"))
+        reason = str(decision.get("reason"))
+        direction = str(decision.get("best_direction"))
 
-        if action == "stop":
+        if reason == "decision_unavailable":
+            text = "Stop. Navigation decision unavailable."
+        elif action == "stop":
             text = "Stop. Person ahead."
         elif action == "slow_down":
             text = "Slow down. Person nearby."
@@ -64,16 +72,31 @@ def _coerce_payload(payload: dict) -> Tuple[dict, dict]:
     return scene, decision
 
 
+def _decision_or_fail_closed(scene: dict, decision: dict) -> dict:
+    if decision:
+        return decision
+    scene_decision = scene.get("decision", {}) if isinstance(scene, dict) else {}
+    if scene_decision:
+        return scene_decision
+    return {
+        "primary_action": "stop",
+        "reason": "decision_unavailable",
+        "best_direction": "center",
+        "urgency": "urgent",
+    }
+
+
 def build_prompt(payload: dict) -> tuple[str, str]:
     scene, decision = _coerce_payload(payload)
+    decision = _decision_or_fail_closed(scene, decision)
     blocking = scene.get("blocking", {})
     humans = scene.get("humans", {})
     open_dirs = scene.get("open_directions", {})
     counts = scene.get("class_counts", {})
-    action = str(decision.get("primary_action", "continue_straight"))
-    reason = str(decision.get("reason", "clear_path"))
-    direction = str(decision.get("best_direction", "center"))
-    urgency = str(decision.get("urgency", "none"))
+    action = str(decision.get("primary_action"))
+    reason = str(decision.get("reason"))
+    direction = str(decision.get("best_direction"))
+    urgency = str(decision.get("urgency"))
 
     system_prompt = (
         "You are a navigation assistant for a visually impaired person using a radar-guided mobility aid. "
@@ -95,15 +118,13 @@ def build_prompt(payload: dict) -> tuple[str, str]:
 
 def build_scene_description(payload: dict) -> str:
     scene, decision = _coerce_payload(payload)
-    blocking = scene.get("blocking", {})
-    humans = scene.get("humans", {})
-    open_dirs = scene.get("open_directions", {})
-    counts = scene.get("class_counts", {})
-    action = str(decision.get("primary_action", "continue_straight"))
-    reason = str(decision.get("reason", "clear_path"))
-    direction = str(decision.get("best_direction", "center"))
-    urgency = str(decision.get("urgency", "none"))
+    decision = _decision_or_fail_closed(scene, decision)
+    action = str(decision.get("primary_action"))
+    reason = str(decision.get("reason"))
+    direction = str(decision.get("best_direction"))
 
+    if reason == "decision_unavailable":
+        return "Stop. Navigation decision unavailable."
     if action == "stop":
         return "Stop. Person detected ahead."
     if action == "slow_down":

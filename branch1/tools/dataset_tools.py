@@ -564,7 +564,7 @@ def _run_build_points(args: argparse.Namespace) -> None:
 # build-patches subcommand
 # =========================================================================
 
-from models.hybrid_rd_patches import (
+from branch1.models.hybrid_rd.hybrid_rd_patches import (
     RDPatchConfig,
     extract_patches_for_bins,
     frame_column,
@@ -574,7 +574,7 @@ from models.hybrid_rd_patches import (
     resolve_frame_index,
     session_column,
 )
-from models.hybrid_rd_runtime import (
+from branch1.models.hybrid_rd.hybrid_rd_runtime import (
     RuntimeRDPatchConfig,
     RuntimeRAPatchConfig,
     compute_rd_patch_scalars,

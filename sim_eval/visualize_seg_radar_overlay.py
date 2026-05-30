@@ -568,7 +568,7 @@ def process_session(
     needs_reproject = (mode == "reproject") or show_all_points
     if needs_reproject:
         if extrinsics_path is None:
-            default = Path("LLM_ML/jetson_nav_pipeline/config/radar_camera_extrinsics.json")
+            default = Path(__file__).resolve().parents[1] / "config" / "radar_camera_extrinsics.json"
             extrinsics_path = default if default.exists() else None
         if extrinsics_path is None:
             if show_all_points:

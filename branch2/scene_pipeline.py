@@ -398,6 +398,14 @@ def compute_nav_decision(scene: dict) -> Dict[str, Any]:
                                 "confidence": scene.get("confidence", "low"), "scene_confidence": scene.get("confidence", "low"),
                                 "total_scene_points": int(scene.get("total_points", 0))}
     decision.update(human_decision)
+    unet = scene.get("unet_freespace", {}) or {}
+    if unet.get("available") and "center_free" in unet:
+        unet_center_free = bool(unet["center_free"])
+        decision.update({
+            "unet_center_free": unet_center_free,
+            "unet_center": float(unet.get("center", 0.0)),
+            "unet_disagree_center": unet_center_free != bool(center_clear),
+        })
     return decision
 
 

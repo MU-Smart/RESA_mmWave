@@ -72,6 +72,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -89,7 +90,9 @@ except ImportError:
 # =============================================================================
 
 OUTPUT_ROOT          = "./dataNoah/Processing/"
-MMWAVE_CFG_PATH      = "/home/ryan/xwr/profile_objdet.cfg"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+MMWAVE_CFG_PATH      = os.environ.get("MMWAVE_CFG_PATH", str(_REPO_ROOT / "config" / "profile_objdet.cfg"))
 
 # Continuous stop-go capture. Each individual output session records for
 # SESSION_RECORDING_DURATION_S, and the recorder keeps starting new sessions

@@ -43,7 +43,7 @@ from tqdm import tqdm
 
 # Canonical extrinsics shipped with the repo.
 _DEFAULT_EXTRINSICS_JSON = (
-    Path(__file__).resolve().parents[3] / "jetson_nav_pipeline/canon/config/radar_camera_extrinsics.json"
+    Path(__file__).resolve().parents[5] / "config" / "radar_camera_extrinsics.json"
 )
 
 
