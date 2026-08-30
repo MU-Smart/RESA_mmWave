@@ -1,0 +1,33 @@
+{
+  "verified_at": "2026-08-30",
+  "datasets": {
+    "ds_buildingunknown_2026-07-20": {
+      "session_count": 644,
+      "local_file_count": 149117,
+      "gcs_file_count": 149117,
+      "missing_count": 0,
+      "extra_count": 0,
+      "missing_sample": [],
+      "status": "complete"
+    },
+    "ds_datanoah_2026-04-28": {
+      "session_count": 10,
+      "local_file_count": 4455,
+      "gcs_file_count": 4455,
+      "missing_count": 0,
+      "extra_count": 0,
+      "missing_sample": [],
+      "status": "complete"
+    },
+    "ds_datatraining_2026-04-28": {
+      "session_count": 3,
+      "local_file_count": 1669,
+      "gcs_file_count": 1669,
+      "missing_count": 0,
+      "extra_count": 0,
+      "missing_sample": [],
+      "status": "complete"
+    }
+  },
+  "overall_status": "complete"
+}

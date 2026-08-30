@@ -1,0 +1,21 @@
+{
+  "method": "target_calibrate",
+  "sessions": {
+    "session_2026-08-27_20-21-05": {
+      "session": "session_2026-08-27_20-21-05",
+      "video_frames_checked": 292,
+      "tag_observations": 292,
+      "correspondences": 0
+    }
+  },
+  "solve": {
+    "success": true,
+    "n_total_correspondences": 0,
+    "n_inliers": 0,
+    "inlier_rms_m": Infinity,
+    "fallback": {
+      "use_static": true,
+      "reason": "insufficient_correspondences"
+    }
+  }
+}

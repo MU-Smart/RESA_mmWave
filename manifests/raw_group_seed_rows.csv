@@ -1,0 +1,5 @@
+legacy_dataset_name,provisional_dataset_id,raw_group_prefix,observed_date_span,notes
+dataset1,ds_legacy_dataset1,gs://miamioh-resa-data/CapstoneData/raw-data/raw_session_extracts/dataset1/,2026-04-21 to 2026-05-11,"Current raw group contains April 21, April 28, and May 11 sessions. Building semantics unresolved; do not rename destructively yet."
+dataset2,ds_legacy_dataset2,gs://miamioh-resa-data/CapstoneData/raw-data/raw_session_extracts/dataset2/,2026-05-11 to 2026-05-11,"May 11-only group in current verified listing."
+dataset3,ds_legacy_dataset3,gs://miamioh-resa-data/CapstoneData/raw-data/raw_session_extracts/dataset3/,2026-04-21 to 2026-05-11,"Current raw group contains April 21-22 plus May 11 sessions in the verified listing; likely spans multiple collection cohorts."
+dataset4,ds_legacy_dataset4,gs://miamioh-resa-data/CapstoneData/raw-data/raw_session_extracts/dataset4/,2026-04-10 to 2026-04-12,"April 10-12 group in current verified listing."

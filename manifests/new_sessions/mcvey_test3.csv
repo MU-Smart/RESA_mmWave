@@ -1,0 +1,4 @@
+session_id,dataset_id,legacy_dataset_name,current_raw_path,target_raw_path,mapping_scope,migration_status,notes
+session_2026-06-15_17-26-22,ds_mcvey_2026-06-14,McVey,D:\Data\McVey\session_2026-06-15_17-26-22\,gs://miamioh-resa-data/CapstoneData/raw/sessions/ds_mcvey_2026-06-14/session_2026-06-15_17-26-22/,session_root,planned,"Fresh upload from external drive. Local source path, not GCS."
+session_2026-06-15_17-26-46,ds_mcvey_2026-06-14,McVey,D:\Data\McVey\session_2026-06-15_17-26-46\,gs://miamioh-resa-data/CapstoneData/raw/sessions/ds_mcvey_2026-06-14/session_2026-06-15_17-26-46/,session_root,planned,"Fresh upload from external drive. Local source path, not GCS."
+session_2026-06-15_17-27-08,ds_mcvey_2026-06-14,McVey,D:\Data\McVey\session_2026-06-15_17-27-08\,gs://miamioh-resa-data/CapstoneData/raw/sessions/ds_mcvey_2026-06-14/session_2026-06-15_17-27-08/,session_root,planned,"Fresh upload from external drive. Local source path, not GCS."

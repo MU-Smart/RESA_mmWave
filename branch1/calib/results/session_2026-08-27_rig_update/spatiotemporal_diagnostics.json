@@ -1,0 +1,159 @@
+{
+  "method": "spatiotemporal_velocity_mvp",
+  "sessions": {
+    "session_2026-08-27_20-18-44": {
+      "session": "session_2026-08-27_20-18-44",
+      "path": "/home/hullumdr/resa/RESA_mmWave/data/raw/sessions/session_2026-08-27_20-18-44",
+      "radar_motion": {
+        "frames": 309,
+        "observable_fraction": 1.0,
+        "median_speed_mps": 0.6602097929990008,
+        "median_inliers": 100.0,
+        "median_residual_rms_mps": 0.19554312718016476
+      },
+      "camera_odometry": {
+        "frames": 180,
+        "valid_fraction": 1.0,
+        "path_length_m": 6.5129210554491825,
+        "median_tracks": 800.0,
+        "median_inliers": 320.0,
+        "median_rms_error_m": 0.04292506340290827,
+        "motion_source": "rgbd",
+        "scale_factor": 1.0
+      },
+      "temporal_init": {
+        "offset_ms": 363.0,
+        "score": 1.0,
+        "overlap_samples": 188,
+        "source": "timestamp_csv_start"
+      },
+      "usable": true
+    },
+    "session_2026-08-27_20-21-05": {
+      "session": "session_2026-08-27_20-21-05",
+      "path": "/home/hullumdr/resa/RESA_mmWave/data/raw/sessions/session_2026-08-27_20-21-05",
+      "radar_motion": {
+        "frames": 308,
+        "observable_fraction": 1.0,
+        "median_speed_mps": 0.644712737887346,
+        "median_inliers": 109.0,
+        "median_residual_rms_mps": 0.1734110697961327
+      },
+      "camera_odometry": {
+        "frames": 180,
+        "valid_fraction": 1.0,
+        "path_length_m": 4.84106997770545,
+        "median_tracks": 800.0,
+        "median_inliers": 331.0,
+        "median_rms_error_m": 0.0423803181127428,
+        "motion_source": "rgbd",
+        "scale_factor": 1.0
+      },
+      "temporal_init": {
+        "offset_ms": 268.0,
+        "score": 1.0,
+        "overlap_samples": 191,
+        "source": "timestamp_csv_start"
+      },
+      "usable": true
+    },
+    "session_2026-08-27_20-23-38": {
+      "session": "session_2026-08-27_20-23-38",
+      "path": "/home/hullumdr/resa/RESA_mmWave/data/raw/sessions/session_2026-08-27_20-23-38",
+      "radar_motion": {
+        "frames": 308,
+        "observable_fraction": 1.0,
+        "median_speed_mps": 0.6989796782490798,
+        "median_inliers": 106.0,
+        "median_residual_rms_mps": 0.16971523310247005
+      },
+      "camera_odometry": {
+        "frames": 180,
+        "valid_fraction": 1.0,
+        "path_length_m": 3.3659031472760677,
+        "median_tracks": 800.0,
+        "median_inliers": 327.0,
+        "median_rms_error_m": 0.04098806639775994,
+        "motion_source": "rgbd",
+        "scale_factor": 1.0
+      },
+      "temporal_init": {
+        "offset_ms": 318.0,
+        "score": 1.0,
+        "overlap_samples": 188,
+        "source": "timestamp_csv_start"
+      },
+      "usable": true
+    },
+    "session_2026-08-27_20-29-31": {
+      "session": "session_2026-08-27_20-29-31",
+      "path": "/home/hullumdr/resa/RESA_mmWave/data/raw/sessions/session_2026-08-27_20-29-31",
+      "radar_motion": {
+        "frames": 308,
+        "observable_fraction": 1.0,
+        "median_speed_mps": 0.7421914872858199,
+        "median_inliers": 90.0,
+        "median_residual_rms_mps": 0.1889560903987344
+      },
+      "camera_odometry": {
+        "frames": 180,
+        "valid_fraction": 1.0,
+        "path_length_m": 4.225683387161782,
+        "median_tracks": 800.0,
+        "median_inliers": 321.0,
+        "median_rms_error_m": 0.04159259674154263,
+        "motion_source": "rgbd",
+        "scale_factor": 1.0
+      },
+      "temporal_init": {
+        "offset_ms": 359.0,
+        "score": 1.0,
+        "overlap_samples": 213,
+        "source": "timestamp_csv_start"
+      },
+      "usable": true
+    }
+  },
+  "paper_basis": {
+    "velocity_residual": "v_camera ~= R_cr * v_radar - omega_camera x t_cr",
+    "mvp_simplification": "finite-difference RGB-D egomotion instead of Lie-group B-splines"
+  },
+  "solve": {
+    "success": true,
+    "paired_motion_samples": 767,
+    "residual_rms_mps": 0.796528955507835,
+    "fallback": {
+      "use_static": true,
+      "reason": "residual_rms_too_high"
+    },
+    "excitation": {
+      "radar_velocity": {
+        "singular_values": [
+          20.60087081173181,
+          6.266926050049999,
+          2.5769626319409706
+        ],
+        "effective_rank": 3,
+        "condition": 7.994245068356003
+      },
+      "camera_velocity": {
+        "singular_values": [
+          4.143042364152629,
+          3.31839174209013,
+          1.6231378197528106
+        ],
+        "effective_rank": 3,
+        "condition": 2.5524895752743766
+      },
+      "camera_angular_velocity": {
+        "singular_values": [
+          1.2796350407802581,
+          1.0715761347463302,
+          0.45729626695054115
+        ],
+        "effective_rank": 3,
+        "condition": 2.79826259967842
+      }
+    }
+  }
+}

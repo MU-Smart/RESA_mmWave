@@ -332,10 +332,16 @@ def _load_sync_map(session_dir: Path) -> Dict[int, List[int]]:
 
 def _load_raw_radar_by_rframe(session_dir: Path) -> Dict[int, np.ndarray]:
     """Load raw session CSV (the big one) → {radar_frame_num: xyz (N,3)}."""
-    # session_2026-*.csv but NOT synchronized_* or labeled_*
-    raw_csv = None
-    for p in session_dir.glob("session_*.csv"):
-        if "synchronized" not in p.name and "labeled" not in p.name:
+    # Prefer the exact adc_to_pointcloud_v6 output name (<session>/<session>.csv).
+    exact = session_dir / f"{session_dir.name}.csv"
+    raw_csv = exact if exact.exists() else None
+    if raw_csv is None:
+        # Fallback: session_2026-*.csv but NOT synchronized_*, labeled_*, or the
+        # recorder's *_timestamps.csv sidecars (color/depth/radar timestamps also
+        # match the "session_*.csv" glob).
+        for p in session_dir.glob("session_*.csv"):
+            if "synchronized" in p.name or "labeled" in p.name or "_timestamps" in p.name:
+                continue
             raw_csv = p
             break
     if raw_csv is None:
@@ -407,15 +413,16 @@ def render_frame(
     depth_out = depth_frame.copy() if depth_frame is not None else None
 
     # Draw raw (unfiltered) points as small cyan dots first (under labeled points)
+    raw_radius = max(2, point_radius - 1)
     if raw_pts_uv is not None and len(raw_pts_uv) > 0:
         for uv in raw_pts_uv:
             u, v = int(round(float(uv[0]))), int(round(float(uv[1])))
             if not (0 <= u < W and 0 <= v < H):
                 continue
-            cv2.circle(color_out, (u, v), 2, RAW_PT_COLOR, -1, cv2.LINE_AA)
-            cv2.circle(seg_out,   (u, v), 2, RAW_PT_COLOR, -1, cv2.LINE_AA)
+            cv2.circle(color_out, (u, v), raw_radius, RAW_PT_COLOR, -1, cv2.LINE_AA)
+            cv2.circle(seg_out,   (u, v), raw_radius, RAW_PT_COLOR, -1, cv2.LINE_AA)
             if depth_out is not None:
-                cv2.circle(depth_out, (u, v), 2, RAW_PT_COLOR, -1, cv2.LINE_AA)
+                cv2.circle(depth_out, (u, v), raw_radius, RAW_PT_COLOR, -1, cv2.LINE_AA)
 
     n_agree = n_disagree = 0
 

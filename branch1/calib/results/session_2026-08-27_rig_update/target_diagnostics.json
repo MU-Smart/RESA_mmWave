@@ -1,0 +1,39 @@
+{
+  "method": "target_calibrate",
+  "sessions": {
+    "session_2026-08-27_20-18-44": {
+      "session": "session_2026-08-27_20-18-44",
+      "video_frames_checked": 294,
+      "tag_observations": 294,
+      "correspondences": 297
+    },
+    "session_2026-08-27_20-21-05": {
+      "session": "session_2026-08-27_20-21-05",
+      "video_frames_checked": 292,
+      "tag_observations": 292,
+      "correspondences": 0
+    },
+    "session_2026-08-27_20-23-38": {
+      "session": "session_2026-08-27_20-23-38",
+      "video_frames_checked": 294,
+      "tag_observations": 294,
+      "correspondences": 297
+    },
+    "session_2026-08-27_20-29-31": {
+      "session": "session_2026-08-27_20-29-31",
+      "video_frames_checked": 273,
+      "tag_observations": 273,
+      "correspondences": 276
+    }
+  },
+  "solve": {
+    "success": true,
+    "n_total_correspondences": 870,
+    "n_inliers": 297,
+    "inlier_rms_m": 0.03166691691528415,
+    "fallback": {
+      "use_static": false,
+      "reason": "target_result_accepted"
+    }
+  }
+}

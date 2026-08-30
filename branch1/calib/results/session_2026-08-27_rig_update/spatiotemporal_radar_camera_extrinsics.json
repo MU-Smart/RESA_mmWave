@@ -1,0 +1,177 @@
+{
+  "method": "spatiotemporal_velocity_mvp",
+  "R_radar_to_camera": [
+    [
+      0.9979151725544937,
+      0.04347450044259924,
+      -0.047699855312167236
+    ],
+    [
+      -0.040918800064354735,
+      -0.14535808291733765,
+      -0.988532589008521
+    ],
+    [
+      -0.04990952000198575,
+      0.9884234899787957,
+      -0.1432761120051368
+    ]
+  ],
+  "t_radar_to_camera": [
+    0.13967013154520297,
+    0.07952053219128925,
+    -0.04719308972169837
+  ],
+  "euler_ZYX_deg": {
+    "yaw": -2.3480572025078774,
+    "pitch": 2.8607933800175647,
+    "roll": 98.24781572551703
+  },
+  "translation_magnitude_m": 0.16750656226942406,
+  "time_offset_ms": 338.5,
+  "estimated_R_radar_to_camera": [
+    [
+      0.9614369834989653,
+      0.2173892341975987,
+      -0.16846616163310618
+    ],
+    [
+      -0.1649966480357592,
+      -0.03414925865201168,
+      -0.9857027616226312
+    ],
+    [
+      -0.22003416302332252,
+      0.9754874417379752,
+      0.0030361347345483902
+    ]
+  ],
+  "estimated_t_radar_to_camera": [
+    0.09463905065325391,
+    0.10139966345068209,
+    2.342604902590601
+  ],
+  "estimated_euler_ZYX_deg": {
+    "yaw": -9.737934020244209,
+    "pitch": 12.711039560299346,
+    "roll": 89.82167156934958
+  },
+  "static_prior": {
+    "loaded": true,
+    "path": "/home/hullumdr/resa/RESA_mmWave/config/radar_camera_extrinsics.json",
+    "R_radar_to_camera": [
+      [
+        0.9979151725544937,
+        0.04347450044259924,
+        -0.047699855312167236
+      ],
+      [
+        -0.040918800064354735,
+        -0.14535808291733765,
+        -0.988532589008521
+      ],
+      [
+        -0.04990952000198575,
+        0.9884234899787957,
+        -0.1432761120051368
+      ]
+    ],
+    "t_radar_to_camera": [
+      0.13967013154520297,
+      0.07952053219128925,
+      -0.04719308972169837
+    ]
+  },
+  "fallback": {
+    "use_static": true,
+    "reason": "residual_rms_too_high"
+  },
+  "solver": {
+    "success": true,
+    "message": "`ftol` termination condition is satisfied.",
+    "cost": 97.58220899598653,
+    "nfev": 27,
+    "loss": "soft_l1",
+    "loss_scale_mps": 0.2
+  },
+  "initialization": {
+    "rotation_source": "static",
+    "time_mode": "fixed",
+    "median_time_offset_ms": 338.5,
+    "wahba_pairs": 727,
+    "wahba_rms_mps": 0.8134304897377018
+  },
+  "pair_filters": {
+    "max_camera_speed_mps": 0.0,
+    "max_camera_omega_radps": 0.0,
+    "max_pair_speed_delta_mps": 0.0,
+    "max_pair_speed_ratio": 0.0
+  },
+  "paired_motion_samples": 767,
+  "residual_rms_mps": 0.796528955507835,
+  "residual_mean_mps": 0.7393716452134702,
+  "residual_max_mps": 1.7147289312743774,
+  "excitation": {
+    "radar_velocity": {
+      "singular_values": [
+        20.60087081173181,
+        6.266926050049999,
+        2.5769626319409706
+      ],
+      "effective_rank": 3,
+      "condition": 7.994245068356003
+    },
+    "camera_velocity": {
+      "singular_values": [
+        4.143042364152629,
+        3.31839174209013,
+        1.6231378197528106
+      ],
+      "effective_rank": 3,
+      "condition": 2.5524895752743766
+    },
+    "camera_angular_velocity": {
+      "singular_values": [
+        1.2796350407802581,
+        1.0715761347463302,
+        0.45729626695054115
+      ],
+      "effective_rank": 3,
+      "condition": 2.79826259967842
+    }
+  },
+  "temporal_initializations": [
+    {
+      "session": "session_2026-08-27_20-18-44",
+      "offset_us": 363000,
+      "score": 1.0,
+      "sample_period_us": 100000,
+      "overlap_samples": 188,
+      "source": "timestamp_csv_start"
+    },
+    {
+      "session": "session_2026-08-27_20-21-05",
+      "offset_us": 268000,
+      "score": 1.0,
+      "sample_period_us": 100000,
+      "overlap_samples": 191,
+      "source": "timestamp_csv_start"
+    },
+    {
+      "session": "session_2026-08-27_20-23-38",
+      "offset_us": 318000,
+      "score": 1.0,
+      "sample_period_us": 100000,
+      "overlap_samples": 188,
+      "source": "timestamp_csv_start"
+    },
+    {
+      "session": "session_2026-08-27_20-29-31",
+      "offset_us": 359000,
+      "score": 1.0,
+      "sample_period_us": 100000,
+      "overlap_samples": 213,
+      "source": "timestamp_csv_start"
+    }
+  ]
+}

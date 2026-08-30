@@ -4,7 +4,7 @@ radar_kpconv_frame_encoder.py
 Pure-PyTorch Kernel Point Convolution (KPConv) frame encoder for sparse
 radar point clouds.
 
-Design choices and improvements over the plan's sketch:
+Design choices:
 ─────────────────────────────────────────────────────────
 1. No torch-points-kernels dependency.
    All operations use standard PyTorch (cdist, einsum). Works on any
