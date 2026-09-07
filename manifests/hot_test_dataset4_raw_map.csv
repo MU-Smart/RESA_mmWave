@@ -1,0 +1,3 @@
+session_id,dataset_id,legacy_dataset_name,current_raw_path,target_raw_path,mapping_scope,migration_status,notes
+session_2026-04-10_21-54-46,ds_legacy_dataset4,dataset4,gs://miamioh-resa-data/CapstoneData/raw-data/raw_session_extracts/dataset4/session_2026-04-10_21-54-46/,gs://miamioh-resa-data/CapstoneData/raw/sessions/ds_legacy_dataset4/session_2026-04-10_21-54-46/,session_root,planned,Two-session canonical raw hot-test cohort.
+session_2026-04-10_21-55-41,ds_legacy_dataset4,dataset4,gs://miamioh-resa-data/CapstoneData/raw-data/raw_session_extracts/dataset4/session_2026-04-10_21-55-41/,gs://miamioh-resa-data/CapstoneData/raw/sessions/ds_legacy_dataset4/session_2026-04-10_21-55-41/,session_root,planned,Two-session canonical raw hot-test cohort.

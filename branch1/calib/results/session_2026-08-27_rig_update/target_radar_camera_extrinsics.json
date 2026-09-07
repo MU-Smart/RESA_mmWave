@@ -1,0 +1,112 @@
+{
+  "method": "AprilTag_reflector_SVD_Kabsch_RANSAC_prior_regularized_TRF",
+  "R_radar_to_camera": [
+    [
+      0.4235389770384071,
+      0.2961148458857807,
+      0.8561137383404731
+    ],
+    [
+      0.9046024337738645,
+      -0.1883847906847475,
+      -0.38236841847760517
+    ],
+    [
+      0.04805384209052105,
+      0.9363905001038318,
+      -0.3476545118010625
+    ]
+  ],
+  "t_radar_to_camera": [
+    -1.8966684617048948,
+    0.8606379526186255,
+    0.629719094012025
+  ],
+  "euler_ZYX_deg": {
+    "yaw": 64.91079252296394,
+    "pitch": -2.754343077413942,
+    "roll": 110.36849439664208
+  },
+  "translation_magnitude_m": 2.1759124698564776,
+  "estimated_R_radar_to_camera": [
+    [
+      0.4235389770384071,
+      0.2961148458857807,
+      0.8561137383404731
+    ],
+    [
+      0.9046024337738645,
+      -0.1883847906847475,
+      -0.38236841847760517
+    ],
+    [
+      0.04805384209052105,
+      0.9363905001038318,
+      -0.3476545118010625
+    ]
+  ],
+  "estimated_t_radar_to_camera": [
+    -1.8966684617048948,
+    0.8606379526186255,
+    0.629719094012025
+  ],
+  "estimated_euler_ZYX_deg": {
+    "yaw": 64.91079252296394,
+    "pitch": -2.754343077413942,
+    "roll": 110.36849439664208
+  },
+  "static_prior": {
+    "loaded": true,
+    "path": "/home/hullumdr/resa/RESA_mmWave/config/radar_camera_extrinsics.json",
+    "R_radar_to_camera": [
+      [
+        0.9979151725544937,
+        0.04347450044259924,
+        -0.047699855312167236
+      ],
+      [
+        -0.040918800064354735,
+        -0.14535808291733765,
+        -0.988532589008521
+      ],
+      [
+        -0.04990952000198575,
+        0.9884234899787957,
+        -0.1432761120051368
+      ]
+    ],
+    "t_radar_to_camera": [
+      0.13967013154520297,
+      0.07952053219128925,
+      -0.04719308972169837
+    ]
+  },
+  "fallback": {
+    "use_static": false,
+    "reason": "target_result_accepted"
+  },
+  "solver": {
+    "success": true,
+    "message": "`ftol` termination condition is satisfied.",
+    "cost": 7.841953359319238,
+    "nfev": 37,
+    "loss": "soft_l1",
+    "loss_scale_m": 0.05,
+    "rotation_prior_weight": 0.15,
+    "translation_prior_weight": 0.5
+  },
+  "n_total_correspondences": 870,
+  "n_ransac_inliers": 573,
+  "ransac_threshold_m": 0.1,
+  "ransac_iterations": 2000,
+  "n_inliers": 297,
+  "n_outliers": 573,
+  "inlier_rms_m": 0.03166691691528415,
+  "inlier_mean_m": 0.030598617971893005,
+  "inlier_max_m": 0.07956610747244615,
+  "apriltag_family": "tagStandard41h12",
+  "apriltag_size_m": 0.2032,
+  "reflector_depth_offset_m": 0.1016,
+  "tag_normal_offset": true,
+  "gate_radius_m": 0.9
+}

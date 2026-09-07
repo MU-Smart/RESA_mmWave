@@ -1,0 +1,112 @@
+{
+  "method": "AprilTag_reflector_SVD_Kabsch_RANSAC_prior_regularized_TRF",
+  "R_radar_to_camera": [
+    [
+      0.9979155281532969,
+      0.04346702780270325,
+      -0.047699226036969425
+    ],
+    [
+      -0.04091975590846724,
+      -0.14534805650599225,
+      -0.9885340237171013
+    ],
+    [
+      -0.04990162569414287,
+      0.9884252930616103,
+      -0.14326642240647913
+    ]
+  ],
+  "t_radar_to_camera": [
+    -0.14354366736044907,
+    0.4762288588764632,
+    0.2987083469422353
+  ],
+  "euler_ZYX_deg": {
+    "yaw": -2.3481111548435987,
+    "pitch": 2.8603405051870374,
+    "roll": 98.24725077060124
+  },
+  "translation_magnitude_m": 0.5801942666030304,
+  "estimated_R_radar_to_camera": [
+    [
+      0.9979155281532969,
+      0.04346702780270325,
+      -0.047699226036969425
+    ],
+    [
+      -0.04091975590846724,
+      -0.14534805650599225,
+      -0.9885340237171013
+    ],
+    [
+      -0.04990162569414287,
+      0.9884252930616103,
+      -0.14326642240647913
+    ]
+  ],
+  "estimated_t_radar_to_camera": [
+    -0.14354366736044907,
+    0.4762288588764632,
+    0.2987083469422353
+  ],
+  "estimated_euler_ZYX_deg": {
+    "yaw": -2.3481111548435987,
+    "pitch": 2.8603405051870374,
+    "roll": 98.24725077060124
+  },
+  "static_prior": {
+    "loaded": true,
+    "path": "/home/hullumdr/resa/RESA_mmWave/config/radar_camera_extrinsics.json",
+    "R_radar_to_camera": [
+      [
+        0.9979151725544937,
+        0.04347450044259924,
+        -0.047699855312167236
+      ],
+      [
+        -0.040918800064354735,
+        -0.14535808291733765,
+        -0.988532589008521
+      ],
+      [
+        -0.04990952000198575,
+        0.9884234899787957,
+        -0.1432761120051368
+      ]
+    ],
+    "t_radar_to_camera": [
+      0.13967013154520297,
+      0.07952053219128925,
+      -0.04719308972169837
+    ]
+  },
+  "fallback": {
+    "use_static": false,
+    "reason": "target_result_accepted"
+  },
+  "solver": {
+    "success": true,
+    "message": "`gtol` termination condition is satisfied.",
+    "cost": 0.03500803222883342,
+    "nfev": 90,
+    "loss": "soft_l1",
+    "loss_scale_m": 0.05,
+    "rotation_prior_weight": 50.0,
+    "translation_prior_weight": 0.1
+  },
+  "n_total_correspondences": 297,
+  "n_ransac_inliers": 297,
+  "ransac_threshold_m": 0.1,
+  "ransac_iterations": 2000,
+  "n_inliers": 297,
+  "n_outliers": 0,
+  "inlier_rms_m": 0.015832765586805686,
+  "inlier_mean_m": 0.010765329295790743,
+  "inlier_max_m": 0.06394265734182125,
+  "apriltag_family": "tagStandard41h12",
+  "apriltag_size_m": 0.2032,
+  "reflector_depth_offset_m": 0.1016,
+  "tag_normal_offset": true,
+  "gate_radius_m": 0.9
+}

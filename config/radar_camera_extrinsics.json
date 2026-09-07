@@ -1,82 +1,52 @@
 {
   "R_radar_to_camera": [
-    [ 0.9979151725544937,  0.04347450044259924, -0.047699855312167236],
-    [-0.040918800064354735, -0.14535808291733765, -0.988532589008521],
-    [-0.04990952000198575,  0.9884234899787957,  -0.1432761120051368]
+    [0.9979155281532969, 0.04346702780270325, -0.047699226036969425],
+    [-0.04091975590846724, -0.14534805650599225, -0.9885340237171013],
+    [-0.04990162569414287, 0.9884252930616103, -0.14326642240647913]
   ],
   "t_radar_to_camera": [
-    0.13967013154520297,
-    0.07952053219128925,
-    -0.04719308972169837
+    -0.14354366736044907,
+    0.4762288588764632,
+    0.2987083469422353
   ],
   "euler_ZYX_deg": {
-    "roll":  98.24781572551701,
-    "pitch":  2.8607933800175602,
-    "yaw":   -2.3480572025078743
+    "yaw": -2.3481111548435987,
+    "pitch": 2.8603405051870374,
+    "roll": 98.24725077060124
   },
-  "translation_magnitude_m": 0.16750656226942406,
-  "n_total_correspondences": 5679,
-  "n_inliers": 2597,
-  "n_outliers": 3082,
-  "inlier_rms_m": 0.045003056497166995,
-  "inlier_mean_m": 0.035877517788839484,
-  "inlier_max_m": 0.0999745297997779,
-  "ransac_threshold_m": 0.1,
-  "ransac_iterations": 2000,
-  "cross_validation": {
-    "n_train": 2468,
-    "n_val": 129,
-    "val_rms_m": 0.04555069127107404,
-    "val_mean_m": 0.03730960266433682,
-    "val_max_m": 0.11691311968019481
-  },
-  "refinement": {
-    "stage2_trf": {
-      "method": "trf",
-      "loss": "soft_l1",
-      "f_scale_m": 0.05,
-      "success": true,
-      "message": "`ftol` termination condition is satisfied.",
-      "cost": 2.744755810262264,
-      "nfev": 3,
-      "used_reproj_weights": true
-    },
-    "stage3_irls": {
-      "converged": true,
-      "iters": 5,
-      "strict_thresh_m": 0.07,
-      "irls_scale_m": 0.03,
-      "used_reproj_weights": true,
-      "history": [
-        {"iter": 1, "dt_m": 0.008289722537707551,  "weighted_cost": 0.42391268407333105,  "ls_success": true},
-        {"iter": 2, "dt_m": 0.0017351070263927934,  "weighted_cost": 0.42753227134457755,  "ls_success": true},
-        {"iter": 3, "dt_m": 0.00037828200671331986, "weighted_cost": 0.427165051006064,    "ls_success": true},
-        {"iter": 4, "dt_m": 8.552250842962137e-05,  "weighted_cost": 0.4270152598714053,   "ls_success": true},
-        {"iter": 5, "dt_m": 2.020189331094813e-05,  "weighted_cost": 0.4269731240606142,   "ls_success": true}
-      ]
-    },
-    "stage4_joint": {
-      "converged": true,
-      "iters": 10,
-      "joint_scale_m": 0.025,
-      "used_reproj_weights": true,
-      "history": [
-        {"iter":  1, "dp": 0.05174528523902155,   "cost": 0.2817086447391905,  "ls_success": true},
-        {"iter":  2, "dp": 0.020549401550811894,  "cost": 0.29046850543793357, "ls_success": true},
-        {"iter":  3, "dp": 0.008827534143784602,  "cost": 0.29154279228688956, "ls_success": true},
-        {"iter":  4, "dp": 0.004122905222109818,  "cost": 0.29170786793941295, "ls_success": true},
-        {"iter":  5, "dp": 0.0019583728427262003, "cost": 0.2917170568923723,  "ls_success": true},
-        {"iter":  6, "dp": 0.0009283700296821959, "cost": 0.29170248159927964, "ls_success": true},
-        {"iter":  7, "dp": 0.00043901824550413027,"cost": 0.2916901528372925,  "ls_success": true},
-        {"iter":  8, "dp": 0.00020716990022045644,"cost": 0.291682710985769,   "ls_success": true},
-        {"iter":  9, "dp": 9.766123946390376e-05, "cost": 0.2916786955624532,  "ls_success": true},
-        {"iter": 10, "dp": 4.60165636093756e-05,  "cost": 0.2916766379221108,  "ls_success": true}
-      ]
-    }
-  },
-  "method": "SVD_Kabsch_RANSAC + TRF_t_only + IRLS_t_only + Joint_Rt_IRLS",
+  "translation_magnitude_m": 0.5801942666030304,
+  "method": "AprilTag_reflector_SVD_Kabsch_RANSAC_prior_regularized_TRF",
   "apriltag_family": "tagStandard41h12",
   "apriltag_size_m": 0.2032,
   "reflector_depth_offset_m": 0.1016,
-  "tag_normal_offset": true
+  "tag_normal_offset": true,
+  "n_total_correspondences": 297,
+  "n_inliers": 297,
+  "n_outliers": 0,
+  "inlier_rms_m": 0.015832765586805686,
+  "inlier_mean_m": 0.010765329295790743,
+  "inlier_max_m": 0.06394265734182125,
+  "ransac_threshold_m": 0.1,
+  "ransac_iterations": 2000,
+  "gate_radius_m": 0.9,
+  "source_session": "session_2026-08-27_20-18-44",
+  "prior": {
+    "path": "config/radar_camera_extrinsics.prior_2026-08-27.json",
+    "R_radar_to_camera": [
+      [0.9979151725544937, 0.04347450044259924, -0.047699855312167236],
+      [-0.040918800064354735, -0.14535808291733765, -0.988532589008521],
+      [-0.04990952000198575, 0.9884234899787957, -0.1432761120051368]
+    ],
+    "t_radar_to_camera": [0.13967013154520297, 0.07952053219128925, -0.04719308972169837],
+    "rotation_delta_deg": 0.001,
+    "translation_delta_m": 0.5977,
+    "rotation_prior_weight": 50.0,
+    "translation_prior_weight": 0.1
+  },
+  "caveats": [
+    "Rotation was solved with rotation_prior_weight=50 (effectively locked to the prior, delta=0.001deg) because the calibration data only supports translation: session_2026-08-27_20-18-44 is a near-static capture (radar-frame spread of a few mm across 297 frames), which cannot constrain rotation via rigid point-set registration -- fitting it freely produced a >150deg rotation flip.",
+    "Because rotation was held fixed, translation absorbed the full single-viewpoint discrepancy: t moved from prior magnitude 0.1675m to 0.5802m. The user explicitly reviewed this number, judged it physically implausible for the actual mechanical change made to the rig, and asked for it to be written anyway -- treat this transform as provisional pending recalibration with genuine multi-viewpoint data (walking/panning the rig around the target, not a static hold).",
+    "Of the 4 sessions in data/raw/sessions/ recorded 2026-08-27, only session_2026-08-27_20-18-44 and session_2026-08-27_20-23-38 and session_2026-08-27_20-29-31 detected the tagStandard41h12/trihedral-reflector target with usable radar correspondences (session_2026-08-27_20-21-05 never got a radar return within any reasonable gate of the tag's predicted position); sessions 20-23-38 and 20-29-31 were excluded from this fit because their independently-solved rotations disagreed with session 20-18-44's by 150-170deg -- the same static-capture degeneracy, not evidence those sessions are wrong.",
+    "Derivation script: branch1/calib/target_calibrate.py (requires pupil_apriltags, not installed in the default environment). Correspondences and diagnostics: branch1/calib/results/session1_prior_anchored/."
+  ]
 }
