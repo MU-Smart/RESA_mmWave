@@ -255,15 +255,35 @@ def has_ra_patch_columns(df: pd.DataFrame) -> bool:
     return {"ra_patch_valid", "ra_patch_shard", "ra_patch_index"}.issubset(df.columns)
 
 
-def load_patch_manifest(dataset_root: str | Path) -> dict[str, object]:
-    manifest_path = Path(dataset_root) / "manifest.json"
-    if not manifest_path.exists():
+def _read_json_dict(path: Path) -> dict[str, object]:
+    if not path.exists():
         return {}
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def load_patch_manifest(dataset_root: str | Path) -> dict[str, object]:
+    payload = _read_json_dict(Path(dataset_root) / "manifest.json")
+    if "frame_number_offset" in payload:
+        return payload
+    # A downstream label manifest (e.g. branch1_fourclass_tools.py's output) has no
+    # frame_number_offset of its own -- it references the real RD/RA patch-build manifest
+    # indirectly via patch_roots, whose values are the patch shard directory itself, so its
+    # parent holds the manifest.json that actually has frame_number_offset. Silently keeping
+    # this label manifest's payload here would default frame_number_offset (and other
+    # patch-build fields) to 0/placeholder in every downstream checkpoint.
+    patch_roots = payload.get("patch_roots")
+    if isinstance(patch_roots, dict):
+        for root in patch_roots.values():
+            if not isinstance(root, str) or root.startswith("missing_target:"):
+                continue
+            patch_payload = _read_json_dict(Path(root).parent / "manifest.json")
+            if "frame_number_offset" in patch_payload:
+                return patch_payload
+    return payload
 
 
 def compute_acc_loss(
