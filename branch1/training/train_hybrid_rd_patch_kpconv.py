@@ -546,6 +546,10 @@ def main() -> None:
     ap.add_argument("--rd-patch-channels", type=int, default=1)
     ap.add_argument("--rd-patch-doppler-bins", type=int, default=17)
     ap.add_argument("--rd-patch-range-bins", type=int, default=7)
+    ap.add_argument("--patch-fusion-mode", default="cnn", choices=["cnn", "attention"],
+                    help="How each point's RD/RA patch becomes an embedding. 'cnn' (default) matches every "
+                         "existing checkpoint. 'attention' tokenizes patch cells and runs a small "
+                         "Transformer over them instead of a CNN + average-pool.")
     ap.add_argument("--best-metric", default="val_bal_acc", choices=["val_loss", "val_bal_acc", "external_val_loss", "external_val_bal_acc"])
     ap.add_argument("--num-workers", type=int, default=0)
     ap.add_argument("--seed", type=int, default=42)
@@ -722,6 +726,9 @@ def main() -> None:
         use_ra_patches=use_ra_patches,
         has_acc_head=args.has_acc_head,
         acc_head_hidden_dim=args.acc_head_hidden_dim,
+        patch_fusion_mode=args.patch_fusion_mode,
+        rd_patch_doppler_bins=args.rd_patch_doppler_bins,
+        rd_patch_range_bins=args.rd_patch_range_bins,
     ).to(device)
     class_weights = torch.tensor(1.0 / class_counts, dtype=torch.float32)
     class_weights = class_weights / class_weights.sum() * n_classes
@@ -750,6 +757,7 @@ def main() -> None:
             "encoder_type": "kpconv",
             "uses_rd_patch": True,
             "uses_ra_patch": bool(use_ra_patches),
+            "patch_fusion_mode": args.patch_fusion_mode,
             "feature_cols": feature_cols,
             "bucket_order": bucket_order,
             "n_classes": n_classes,
@@ -783,6 +791,7 @@ def main() -> None:
             "encoder_type": "kpconv",
             "uses_rd_patch": True,
             "uses_ra_patch": bool(use_ra_patches),
+            "patch_fusion_mode": args.patch_fusion_mode,
             "epoch": int(epoch),
             "model_state": model.state_dict(),
             "feature_means": feature_means.tolist(),
