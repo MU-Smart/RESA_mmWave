@@ -24,11 +24,11 @@ import numpy as np
 import pandas as pd
 
 THIS_FILE = Path(__file__).resolve()
-CANON_DIR = THIS_FILE.parents[1]
-if str(CANON_DIR) not in sys.path:
-    sys.path.insert(0, str(CANON_DIR))
+REPO_ROOT = THIS_FILE.parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from perception.depth_correspondence import (  # noqa: E402
+from branch1.inputs.geometry.depth_correspondence import (  # noqa: E402
     DEPTH_NUMERIC_COLS,
     DepthCorrespondenceConfig,
     DepthFrameCache,
@@ -40,7 +40,7 @@ from perception.depth_correspondence import (  # noqa: E402
     load_depth_scale,
     make_default_depth_record,
 )
-from perception.calibration import load_calibration  # noqa: E402
+from branch1.calib.calibration import load_calibration  # noqa: E402
 
 
 def _find_first(directory: Path, *patterns: str) -> Path | None:

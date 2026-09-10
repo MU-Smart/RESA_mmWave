@@ -115,5 +115,15 @@ def load_mod(name: str, rel: str):
     if s is None or s.loader is None:
         raise ImportError(f"Cannot create spec for {p}")
     m = importlib.util.module_from_spec(s)
-    s.loader.exec_module(m)
+    # Must be registered before exec: dataclasses under `from __future__ import
+    # annotations` resolve field types via sys.modules[cls.__module__], which
+    # is this module's own name. Without this, exec_module() raises inside any
+    # @dataclass in the loaded file ("'NoneType' object has no attribute
+    # '__dict__'").
+    sys.modules[name] = m
+    try:
+        s.loader.exec_module(m)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
     return m
