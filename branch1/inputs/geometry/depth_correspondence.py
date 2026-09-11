@@ -8,6 +8,7 @@ camera/depth evidence should become "unknown", not "ghost".
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +16,11 @@ from typing import Any
 
 import numpy as np
 
-from perception.calibration import load_calibration, project_radar_to_image
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from branch1.calib.calibration import load_calibration, project_radar_to_image
 
 
 DEPTH_NUMERIC_COLS = [

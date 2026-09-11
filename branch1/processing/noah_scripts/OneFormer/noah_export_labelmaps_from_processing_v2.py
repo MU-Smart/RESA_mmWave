@@ -202,7 +202,10 @@ def main():
     )
     local_model_bin = local_path / "pytorch_model.bin"
     local_model_uses_lfs_stub = is_lfs_pointer(local_model_bin)
-    use_local = local_path.is_dir() and not local_model_uses_lfs_stub
+    local_has_weights = local_path.is_dir() and (
+        local_model_bin.exists() or any(local_path.glob("*.safetensors"))
+    )
+    use_local = local_has_weights and not local_model_uses_lfs_stub
     model_name = str(local_path) if use_local else hf_name
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

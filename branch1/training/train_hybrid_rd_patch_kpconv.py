@@ -255,15 +255,35 @@ def has_ra_patch_columns(df: pd.DataFrame) -> bool:
     return {"ra_patch_valid", "ra_patch_shard", "ra_patch_index"}.issubset(df.columns)
 
 
-def load_patch_manifest(dataset_root: str | Path) -> dict[str, object]:
-    manifest_path = Path(dataset_root) / "manifest.json"
-    if not manifest_path.exists():
+def _read_json_dict(path: Path) -> dict[str, object]:
+    if not path.exists():
         return {}
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def load_patch_manifest(dataset_root: str | Path) -> dict[str, object]:
+    payload = _read_json_dict(Path(dataset_root) / "manifest.json")
+    if "frame_number_offset" in payload:
+        return payload
+    # A downstream label manifest (e.g. branch1_fourclass_tools.py's output) has no
+    # frame_number_offset of its own -- it references the real RD/RA patch-build manifest
+    # indirectly via patch_roots, whose values are the patch shard directory itself, so its
+    # parent holds the manifest.json that actually has frame_number_offset. Silently keeping
+    # this label manifest's payload here would default frame_number_offset (and other
+    # patch-build fields) to 0/placeholder in every downstream checkpoint.
+    patch_roots = payload.get("patch_roots")
+    if isinstance(patch_roots, dict):
+        for root in patch_roots.values():
+            if not isinstance(root, str) or root.startswith("missing_target:"):
+                continue
+            patch_payload = _read_json_dict(Path(root).parent / "manifest.json")
+            if "frame_number_offset" in patch_payload:
+                return patch_payload
+    return payload
 
 
 def compute_acc_loss(
@@ -546,6 +566,10 @@ def main() -> None:
     ap.add_argument("--rd-patch-channels", type=int, default=1)
     ap.add_argument("--rd-patch-doppler-bins", type=int, default=17)
     ap.add_argument("--rd-patch-range-bins", type=int, default=7)
+    ap.add_argument("--patch-fusion-mode", default="cnn", choices=["cnn", "attention"],
+                    help="How each point's RD/RA patch becomes an embedding. 'cnn' (default) matches every "
+                         "existing checkpoint. 'attention' tokenizes patch cells and runs a small "
+                         "Transformer over them instead of a CNN + average-pool.")
     ap.add_argument("--best-metric", default="val_bal_acc", choices=["val_loss", "val_bal_acc", "external_val_loss", "external_val_bal_acc"])
     ap.add_argument("--num-workers", type=int, default=0)
     ap.add_argument("--seed", type=int, default=42)
@@ -722,6 +746,9 @@ def main() -> None:
         use_ra_patches=use_ra_patches,
         has_acc_head=args.has_acc_head,
         acc_head_hidden_dim=args.acc_head_hidden_dim,
+        patch_fusion_mode=args.patch_fusion_mode,
+        rd_patch_doppler_bins=args.rd_patch_doppler_bins,
+        rd_patch_range_bins=args.rd_patch_range_bins,
     ).to(device)
     class_weights = torch.tensor(1.0 / class_counts, dtype=torch.float32)
     class_weights = class_weights / class_weights.sum() * n_classes
@@ -750,6 +777,7 @@ def main() -> None:
             "encoder_type": "kpconv",
             "uses_rd_patch": True,
             "uses_ra_patch": bool(use_ra_patches),
+            "patch_fusion_mode": args.patch_fusion_mode,
             "feature_cols": feature_cols,
             "bucket_order": bucket_order,
             "n_classes": n_classes,
@@ -783,6 +811,7 @@ def main() -> None:
             "encoder_type": "kpconv",
             "uses_rd_patch": True,
             "uses_ra_patch": bool(use_ra_patches),
+            "patch_fusion_mode": args.patch_fusion_mode,
             "epoch": int(epoch),
             "model_state": model.state_dict(),
             "feature_means": feature_means.tolist(),

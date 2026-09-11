@@ -13,6 +13,8 @@ from typing import Sequence
 import torch
 from torch import nn
 
+from branch1.models.hybrid_rd.rd_patch_attention_encoder import RDPatchAttentionEncoder
+
 
 @dataclass(frozen=True)
 class RDPatchModelConfig:
@@ -150,21 +152,36 @@ class RDPatchTemporalSegmenter(nn.Module):
         use_ra_patches: bool = False,
         has_acc_head: bool = False,
         acc_head_hidden_dim: int = 64,
+        patch_fusion_mode: str = "cnn",
+        ra_patch_doppler_bins: int = 9,
+        ra_patch_range_bins: int = 7,
+        rd_patch_doppler_bins: int = 17,
+        rd_patch_range_bins: int = 7,
     ) -> None:
         super().__init__()
+        if patch_fusion_mode not in ("cnn", "attention"):
+            raise ValueError(f"patch_fusion_mode must be 'cnn' or 'attention', got {patch_fusion_mode!r}.")
         self.base_model = base_model
-        self.rd_patch_encoder = RDPatchEncoder(
-            patch_channels=patch_channels,
-            embed_dim=patch_embed_dim,
-            hidden_channels=patch_hidden_channels,
-        )
-        self.use_ra_patches = bool(use_ra_patches)
-        self.ra_patch_encoder = (
-            RDPatchEncoder(
+        self.patch_fusion_mode = str(patch_fusion_mode)
+
+        def _make_patch_encoder(doppler_bins: int, range_bins: int) -> nn.Module:
+            if self.patch_fusion_mode == "attention":
+                return RDPatchAttentionEncoder(
+                    patch_channels=patch_channels,
+                    embed_dim=patch_embed_dim,
+                    doppler_bins=doppler_bins,
+                    range_bins=range_bins,
+                )
+            return RDPatchEncoder(
                 patch_channels=patch_channels,
                 embed_dim=patch_embed_dim,
                 hidden_channels=patch_hidden_channels,
             )
+
+        self.rd_patch_encoder = _make_patch_encoder(rd_patch_doppler_bins, rd_patch_range_bins)
+        self.use_ra_patches = bool(use_ra_patches)
+        self.ra_patch_encoder = (
+            _make_patch_encoder(ra_patch_doppler_bins, ra_patch_range_bins)
             if self.use_ra_patches
             else None
         )
