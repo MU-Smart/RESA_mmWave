@@ -32,6 +32,8 @@ for path in (CANON_DIR, REPO_ROOT, IO_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from branch1.inputs.geometry.corridor_soft_structural import process_frame_group  # noqa: E402
+
 # =========================================================================
 # Shared constants
 # =========================================================================
@@ -216,23 +218,27 @@ def _add_soft_structural(df: pd.DataFrame, *, window_size: int = WINDOW_SIZE) ->
     }
     rng = np.random.default_rng(42)
     half = window_size // 2
+    any_frame_produced_features = False
     for i, anchor in enumerate(frames):
         anchor_pts = frame_pts[anchor]
         if len(anchor_pts) < 3:
             continue
         neighbours = frames[max(0, i - half): i + half + 1]
         agg_pts = np.vstack([frame_pts[f] for f in neighbours if len(frame_pts[f]) > 0])
-        try:
-            from perception.corridor_soft_structural import process_frame_group
-            _, feats = process_frame_group(anchor_pts, agg_pts, rng=rng)
-        except Exception:
-            continue
+        _, feats = process_frame_group(anchor_pts, agg_pts, rng=rng)
+        any_frame_produced_features = True
         mask = out[FRAME_COL] == anchor
         n = int(mask.sum())
         for col in soft_cols:
             values = feats.get(col)
             if values is not None and len(values) == n:
                 out.loc[mask, col] = values
+    if frames and not any_frame_produced_features:
+        raise RuntimeError(
+            "_add_soft_structural produced no features for any frame "
+            f"(all {len(frames)} frames had < 3 points) — soft-structural "
+            "columns would silently stay constant. Check the input point cloud."
+        )
     return out
 
 

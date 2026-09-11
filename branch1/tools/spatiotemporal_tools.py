@@ -27,12 +27,12 @@ from typing import Any
 import numpy as np
 
 THIS_FILE = Path(__file__).resolve()
-REPO_ROOT = THIS_FILE.parents[3]
+REPO_ROOT = THIS_FILE.parents[2]
 
-if str(THIS_FILE.parent) not in sys.path:
-    sys.path.insert(0, str(THIS_FILE.parent))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from perception.scene_motion_adapter import (  # noqa: E402
+from branch2.scene_motion_adapter import (  # noqa: E402
     EgoMotionEstimate,
     FramePacket,
     MotionAwareConfig,

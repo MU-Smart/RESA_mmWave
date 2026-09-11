@@ -32,8 +32,10 @@ from pathlib import Path
 import torch
 
 _HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+_KPCONV_DIR = _HERE.parent / "kpconv"
+for _p in (_HERE, _KPCONV_DIR):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from radar_3dgcnn_common_doorwall import (
     BUCKET_ORDER,

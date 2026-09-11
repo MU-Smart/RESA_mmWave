@@ -71,6 +71,23 @@ def _numeric(series: pd.Series, default: float = 0.0) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(default)
 
 
+def _num(value: Any, default: float) -> float:
+    """NaN-safe scalar numeric coercion. `value or default` silently passes NaN
+    through (NaN is truthy in Python), which crashes downstream int() casts on
+    rows with missing depth-teacher evidence — use this instead."""
+    coerced = pd.to_numeric(value, errors="coerce")
+    if pd.isna(coerced):
+        return float(default)
+    return float(coerced)
+
+
+def _strval(value: Any, default: str) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return default
+    text = str(value)
+    return text if text else default
+
+
 def _round_join_cols(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if "radar_frame_num" not in out.columns and "frame_num" in out.columns:
@@ -110,7 +127,7 @@ def _manual_acc(row: pd.Series) -> str:
 
 
 def _return_type_for_no(row: pd.Series) -> str:
-    if int(float(row.get("depth_foreground_occluded", 0) or 0)):
+    if int(_num(row.get("depth_foreground_occluded"), 0)):
         return "depth_occluded"
     sem = str(row.get("cam_semantic_bucket", "") or "").strip().lower()
     bucket = str(row.get("bucket_3class", row.get("bucket", "")) or "").strip().lower()
@@ -123,15 +140,15 @@ def _return_type_for_no(row: pd.Series) -> str:
 
 def _compute_teacher_row(row: pd.Series, *, eligible: bool, args: argparse.Namespace) -> dict[str, Any]:
     manual = _manual_acc(row)
-    p_depth = float(row.get("p_depth_match", args.depth_unknown_floor) or args.depth_unknown_floor)
-    p_dir = float(row.get("p_dir_doppler", row.get("static_confidence", 1.0)) or 1.0)
-    static_conf = float(row.get("static_confidence", 0.5) or 0.5)
-    ghost_score = float(row.get("ghost_score", 0.5) or 0.5)
-    missing_reason = str(row.get("depth_missing_reason", "unknown") or "unknown")
-    cluster_size = int(float(row.get("depth_candidate_cluster_size", 0) or 0))
-    cluster_radius = float(row.get("depth_candidate_cluster_radius_m", 999.0) or 999.0)
-    cluster_min_depth = float(row.get("depth_candidate_cluster_min_depth_match", 1.0) or 1.0)
-    foreground = bool(int(float(row.get("depth_foreground_occluded", 0) or 0)))
+    p_depth = _num(row.get("p_depth_match"), args.depth_unknown_floor)
+    p_dir = _num(row.get("p_dir_doppler"), _num(row.get("static_confidence"), 1.0))
+    static_conf = _num(row.get("static_confidence"), 0.5)
+    ghost_score = _num(row.get("ghost_score"), 0.5)
+    missing_reason = _strval(row.get("depth_missing_reason"), "unknown")
+    cluster_size = int(_num(row.get("depth_candidate_cluster_size"), 0))
+    cluster_radius = _num(row.get("depth_candidate_cluster_radius_m"), 999.0)
+    cluster_min_depth = _num(row.get("depth_candidate_cluster_min_depth_match"), 1.0)
+    foreground = bool(int(_num(row.get("depth_foreground_occluded"), 0)))
 
     p_depth_for_score = p_depth if eligible and missing_reason == "ok" else float(args.depth_unknown_floor)
     p_dir_clip = float(np.clip(p_dir, 0.0, 1.0))
