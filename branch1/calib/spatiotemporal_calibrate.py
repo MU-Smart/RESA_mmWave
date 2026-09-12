@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Standalone spatiotemporal radar-camera calibration MVP.
 
-This script is a conservative first pass inspired by Wise et al.,
-"A Continuous-Time Approach for 3D Radar-to-Camera Extrinsic Calibration".
-It does not implement Lie-group B-splines yet. Instead, it keeps the key
-targetless idea that is useful for this codebase:
+This script is a conservative first pass inspired by Wise et al., "A
+Continuous-Time Approach for 3D Radar-to-Camera Extrinsic Calibration" (ICRA
+2021, arXiv:2103.07505). It does not implement their cumulative B-spline
+continuous-time trajectory (Sommer et al. Lie-group splines) or their full
+SE(3) camera-pose residual -- instead it keeps their exact instantaneous
+rigid-body kinematic relation (their Eq. 16, confirmed against the paper
+text on 2026-09-04), applied per-frame rather than across a fitted spline:
 
     camera_velocity_camera ~= R_cr * radar_velocity_radar
                               - omega_camera x t_cr
@@ -13,6 +16,23 @@ where R_cr and t_cr are the radar-to-camera extrinsics used by the current
 projection code. The static calibration result is used as a strong prior and
 as a fallback so this branch can be evaluated without changing the live
 navigation pipeline.
+
+IMU extension (2026-09): omega_camera above can now come from the D435i
+gyro (rotated into the camera-frame convention via
+config/d435i_factory_extrinsics.json) instead of finite-differencing noisy
+RGB-D odometry poses -- see --omega-source. This targets the design in
+docs/IMU_SPATIOTEMPORAL_CALIBRATION_PLAN.md (Stage 1/3 of that plan's
+staged sequence; Stage 4's full per-detection Doppler lever-arm residual is
+not implemented here yet). Only sessions with a `<session>_imu.csv` present
+(currently the `ds_buildingunknown_2026-07-20` dataset group only, per
+manifests/imu_audit_2026-09-04.md) can use the IMU omega source; other
+sessions fall back to the original RGB-D-differenced omega automatically.
+
+The excitation diagnostics also now report the pairwise non-collinearity
+check from Wise et al.'s degeneracy analysis (their Eq. 20: calibration is
+only well-conditioned if the pooled samples contain rotation and
+translation about/along at least two non-collinear axes -- omega2 x omega1
+!= 0 and v2 x v1 != 0). See _pairwise_noncollinearity.
 """
 
 from __future__ import annotations
@@ -23,14 +43,20 @@ import json
 import math
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import cv2
 import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation, Slerp
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from imu_io import IMUStream, IMUStreams, find_imu_csv, load_imu_csv, summarize_imu_streams  # noqa: E402
+from d435i_extrinsics import D435iFactoryExtrinsics, load_d435i_factory_extrinsics  # noqa: E402
+from doppler_lever_arm import solve_doppler_lever_arm  # noqa: E402
+from geometry_refinement import refine_with_geometry  # noqa: E402
 
 
 THIS_FILE = Path(__file__).resolve()
@@ -188,6 +214,108 @@ def load_static_prior(path: Path | None) -> StaticPrior:
 
 
 # ---------------------------------------------------------------------------
+# IMU (D435i gyro/accel) loading
+# ---------------------------------------------------------------------------
+
+
+_FACTORY_EXTRINSICS_CACHE: dict[str, D435iFactoryExtrinsics | None] = {}
+
+
+def _cached_factory_extrinsics() -> D435iFactoryExtrinsics | None:
+    """Avoid re-reading config/d435i_factory_extrinsics.json once per
+    session across a rolling batch of hundreds of sessions."""
+    if "default" not in _FACTORY_EXTRINSICS_CACHE:
+        _FACTORY_EXTRINSICS_CACHE["default"] = load_d435i_factory_extrinsics()
+    return _FACTORY_EXTRINSICS_CACHE["default"]
+
+
+def load_imu_gyro_camera_frame(
+    session_dir: Path,
+    factory_extrinsics: D435iFactoryExtrinsics | None,
+) -> tuple[IMUStream | None, IMUStreams | None, str | None]:
+    """Load `<session>_imu.csv` if present and rotate the gyro stream into
+    the camera (color) frame convention.
+
+    Returns (gyro_camera_frame, raw_streams, warning). raw_streams is kept
+    separately (unrotated) so accel can still be used for diagnostics even
+    when factory_extrinsics is unavailable. gyro_camera_frame is None
+    whenever the IMU CSV is missing or the rotation can't be applied yet.
+
+    The raw gyro reading is already expressed in the depth-optical-frame
+    axis convention by hardware design (confirmed: factory
+    depth<->gyro rotation is exactly identity, config/d435i_factory_extrinsics.json).
+    Rotating by R_depth_to_color (also confirmed directly from the physical
+    device, NOT from meta_data.json -- see d435i_extrinsics.py) reprojects it
+    into the same "camera frame" convention CameraTrajectory already uses.
+    """
+    imu_csv_path = find_imu_csv(session_dir)
+    if imu_csv_path is None:
+        return None, None, None
+    streams = load_imu_csv(imu_csv_path)
+    if factory_extrinsics is None:
+        return None, streams, "factory extrinsics unavailable; cannot rotate IMU gyro into camera frame"
+    gyro_camera_frame = streams.gyro.rotated(factory_extrinsics.R_depth_to_color)
+    return gyro_camera_frame, streams, None
+
+
+def compute_omega_agreement(
+    trajectory: "CameraTrajectory",
+    imu_gyro_camera_frame: IMUStream,
+) -> dict[str, Any]:
+    """Free sanity check (no calibration solve involved): do RGB-D-differenced
+    omega and IMU gyro (already rotated into camera frame) roughly agree?
+    A large disagreement flags either a bad-quality RGB-D odometry session
+    or a gross timestamp-domain mismatch, worth catching before either
+    pollutes a pooled multi-session solve."""
+    ts = trajectory.timestamps_us
+    if len(ts) < 2 or len(imu_gyro_camera_frame) < 2:
+        return {"n_compared": 0, "median_abs_diff_radps": float("nan")}
+    rgbd_omega = np.asarray([trajectory.angular_velocity_camera_at(int(t)) for t in ts], dtype=np.float64)
+    imu_omega = np.asarray([imu_gyro_camera_frame.value_at(float(t)) for t in ts], dtype=np.float64)
+    diff = np.linalg.norm(rgbd_omega - imu_omega, axis=1)
+    return {
+        "n_compared": int(len(ts)),
+        "median_abs_diff_radps": float(np.median(diff)),
+        "p90_abs_diff_radps": float(np.percentile(diff, 90)),
+        "rgbd_median_norm_radps": float(np.median(np.linalg.norm(rgbd_omega, axis=1))),
+        "imu_median_norm_radps": float(np.median(np.linalg.norm(imu_omega, axis=1))),
+    }
+
+
+@dataclass(slots=True)
+class _IMUAngularVelocityAt:
+    """Picklable stand-in for `lambda ts: imu_gyro_camera_frame.value_at(...)`.
+
+    SessionMotionData.angular_velocity_at must survive pickling so a
+    rolling-batch driver (see notebooks/imu_spatiotemporal_calibration_driver.ipynb)
+    can persist and resume mid-run instead of losing already-processed
+    sessions to a Colab disconnect -- a bare lambda closure is not picklable,
+    a callable dataclass wrapping the (picklable) IMUStream is."""
+
+    imu_gyro_camera_frame: IMUStream
+
+    def __call__(self, timestamp_us: int) -> np.ndarray:
+        return self.imu_gyro_camera_frame.value_at(float(timestamp_us))
+
+
+def choose_omega_source(
+    omega_source: str,
+    trajectory: "CameraTrajectory",
+    imu_gyro_camera_frame: IMUStream | None,
+) -> tuple[str, Callable[[int], np.ndarray]]:
+    """Select which signal supplies omega_camera in the v_camera ~= R_cr *
+    v_radar - omega_camera x t_cr residual (Wise et al. Eq. 16). 'auto'
+    prefers IMU whenever it's actually available for this session, since
+    gyro is a materially cleaner rotation signal than finite-differencing
+    RGB-D odometry poses (docs/IMU_SPATIOTEMPORAL_CALIBRATION_PLAN.md
+    section 2)."""
+    use_imu = omega_source == "imu" or (omega_source == "auto" and imu_gyro_camera_frame is not None)
+    if use_imu and imu_gyro_camera_frame is not None:
+        return "imu", _IMUAngularVelocityAt(imu_gyro_camera_frame)
+    return "rgbd", trajectory.angular_velocity_camera_at
+
+
+# ---------------------------------------------------------------------------
 # Radar ego-motion from DCA point CSV
 # ---------------------------------------------------------------------------
 
@@ -220,6 +348,16 @@ class RadarVelocityEstimate:
     residual_rms_mps: float
     condition_number: float
     observable: bool
+    # RANSAC-accepted per-detection static-return observations, radar-frame
+    # coordinates -- Stage 4's raw material (doppler_lever_arm.py). Kept
+    # here (not re-derived from RadarFrame) so RadarMotion.estimates stays
+    # the single source of truth per frame. accepted_doppler_mps is already
+    # sign-adjusted by doppler_sign, matching the "radial" convention this
+    # function's own RANSAC fit uses (i.e. dot(unit_vector, velocity) ~=
+    # accepted_doppler_mps, no extra sign flip needed downstream).
+    accepted_xyz: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))
+    accepted_doppler_mps: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    accepted_snr: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
 
 @dataclass(slots=True)
@@ -333,9 +471,10 @@ def estimate_radar_frame_velocity(
 
     xyz = xyz[valid]
     ranges = ranges[valid]
+    snr_valid = snr[valid]
     unit_vectors = xyz / ranges[:, None]
     radial = float(doppler_sign) * doppler[valid]
-    weights = np.clip(snr[valid] / max(float(np.median(snr[valid])), 1e-3), 0.1, 8.0)
+    weights = np.clip(snr_valid / max(float(np.median(snr_valid)), 1e-3), 0.1, 8.0)
 
     rng = np.random.default_rng(frame.frame_num + 17)
     best_mask = np.zeros(len(unit_vectors), dtype=bool)
@@ -382,6 +521,9 @@ def estimate_radar_frame_velocity(
         residual_rms_mps=rms,
         condition_number=float(cond if math.isfinite(cond) else best_cond),
         observable=observable,
+        accepted_xyz=xyz[inliers] if np.any(inliers) else xyz,
+        accepted_doppler_mps=radial[inliers] if np.any(inliers) else radial,
+        accepted_snr=snr_valid[inliers] if np.any(inliers) else snr_valid,
     )
 
 
@@ -623,6 +765,51 @@ def _load_depth_m(session: RGBDSession, depth_index: int) -> np.ndarray:
     return depth_raw.astype(np.float32) * float(session.depth_scale_m_per_unit)
 
 
+@dataclass(slots=True)
+class DepthLookup:
+    """Stage 5's depth accessor. depth_at(timestamp_us) returns the aligned
+    depth image (meters, same pixel grid as `intrinsics` -- COLOR
+    intrinsics, matching the existing _backproject convention: depth is
+    stored already registered to the color image) nearest that timestamp,
+    or None if out of range / unreadable."""
+
+    intrinsics: CameraIntrinsics
+    depth_at: Callable[[int], np.ndarray | None]
+
+
+def build_depth_lookup(session_dir: Path) -> DepthLookup | None:
+    """Cheap depth-frame accessor for Stage 5 geometry refinement.
+
+    Deliberately does NOT decode the color video: `load_rgbd_session` only
+    needs the timestamp CSVs + meta_data.json to resolve intrinsics and the
+    color-frame -> depth-frame index mapping, and `_load_depth_m` reads the
+    per-frame .npy directly by index. Returns None for monocular-only
+    sessions (no depth) or if the session's RGB-D metadata can't be loaded
+    -- Stage 5 simply skips those sessions rather than failing the batch.
+    """
+    try:
+        rgbd = load_rgbd_session(session_dir, allow_monocular=False)
+    except (FileNotFoundError, ValueError):
+        return None
+    if not rgbd.depth_available:
+        return None
+    color_ts = np.asarray(rgbd.color_timestamps_us, dtype=np.int64)
+    if len(color_ts) == 0:
+        return None
+
+    def depth_at(timestamp_us: int) -> np.ndarray | None:
+        color_idx = int(np.clip(np.searchsorted(color_ts, timestamp_us), 0, len(color_ts) - 1))
+        if color_idx >= len(rgbd.depth_indices):
+            return None
+        depth_idx = rgbd.depth_indices[color_idx]
+        try:
+            return _load_depth_m(rgbd, depth_idx)
+        except (FileNotFoundError, OSError, ValueError):
+            return None
+
+    return DepthLookup(intrinsics=rgbd.intrinsics, depth_at=depth_at)
+
+
 def iter_rgbd_frames(session_dir: Path, *, step: int, max_frames: int | None, allow_monocular: bool) -> Iterable[RGBDFrame]:
     session = load_rgbd_session(session_dir, allow_monocular=allow_monocular)
     capture = cv2.VideoCapture(str(session.color_video_path))
@@ -854,6 +1041,16 @@ class SessionMotionData:
     camera_odometry: CameraOdometry
     camera_trajectory: CameraTrajectory
     temporal_init: TemporalInitialization
+    # Supplies omega_camera(timestamp_us) for the v_camera ~= R_cr * v_radar
+    # - omega_camera x t_cr residual (Wise et al. Eq. 16). Defaults to the
+    # RGB-D-differenced trajectory; process_session may replace this with
+    # an IMU-gyro-backed callable per --omega-source. See choose_omega_source.
+    angular_velocity_at: Callable[[int], np.ndarray] = field(default=None)  # type: ignore[assignment]
+    omega_source: str = "rgbd"
+    # Stage 5 (geometry_refinement.py) reads this via duck typing; None
+    # whenever depth isn't available for this session (monocular-only) or
+    # --refine-geometry wasn't requested (not built, to avoid needless work).
+    depth_lookup: DepthLookup | None = None
 
 
 @dataclass(slots=True)
@@ -1012,7 +1209,7 @@ def gather_pairs(
         if len(idxs) == 0:
             continue
         cam_v = np.asarray([data.camera_trajectory.linear_velocity_camera_at(int(query[i])) for i in idxs], dtype=np.float64)
-        cam_w = np.asarray([data.camera_trajectory.angular_velocity_camera_at(int(query[i])) for i in idxs], dtype=np.float64)
+        cam_w = np.asarray([data.angular_velocity_at(int(query[i])) for i in idxs], dtype=np.float64)
         finite = np.all(np.isfinite(cam_v), axis=1) & np.all(np.isfinite(cam_w), axis=1)
         if not np.any(finite):
             continue
@@ -1092,6 +1289,46 @@ def _residual_metrics(rotation: np.ndarray, translation: np.ndarray, pairs: Pair
     return float(np.sqrt(np.mean(norms**2))), float(np.mean(norms)), float(np.max(norms))
 
 
+def _pairwise_noncollinearity(vectors: np.ndarray, *, n_pairs: int = 400, seed: int = 7) -> dict[str, Any]:
+    """Operationalizes Wise et al.'s degeneracy condition (Eq. 20): the
+    calibration is only well-conditioned if the pooled samples contain
+    pairs with omega2 x omega1 != 0 (and, separately, v2 x v1 != 0) -- i.e.
+    rotation about, and translation along, at least two non-collinear axes.
+    Reports the distribution of normalized cross-product magnitudes
+    (~ sin of the angle between random sample pairs) across the pooled
+    vectors; values clustered near 0 indicate a near-degenerate
+    (single-axis / single-direction) motion pool, exactly the failure mode
+    the paper's Eq. 20 constraint rules out."""
+    n = len(vectors)
+    if n < 2:
+        return {"pairs_checked": 0, "median_sin_angle": 0.0, "p10_sin_angle": 0.0, "degenerate": True}
+    rng = np.random.default_rng(seed)
+    idx_a = rng.integers(0, n, size=n_pairs)
+    idx_b = rng.integers(0, n, size=n_pairs)
+    keep = idx_a != idx_b
+    a = vectors[idx_a[keep]]
+    b = vectors[idx_b[keep]]
+    if len(a) == 0:
+        return {"pairs_checked": 0, "median_sin_angle": 0.0, "p10_sin_angle": 0.0, "degenerate": True}
+    cross = np.cross(a, b)
+    norm_a = np.linalg.norm(a, axis=1)
+    norm_b = np.linalg.norm(b, axis=1)
+    valid = (norm_a > 1e-6) & (norm_b > 1e-6)
+    if not np.any(valid):
+        return {"pairs_checked": 0, "median_sin_angle": 0.0, "p10_sin_angle": 0.0, "degenerate": True}
+    sin_angle = np.linalg.norm(cross[valid], axis=1) / (norm_a[valid] * norm_b[valid])
+    median_sin = float(np.median(sin_angle))
+    return {
+        "pairs_checked": int(valid.sum()),
+        "median_sin_angle": median_sin,
+        "p10_sin_angle": float(np.percentile(sin_angle, 10)),
+        # threshold is a judgment call, not from the paper -- flag rather
+        # than hard-fail, since the actual pass/fail should be tuned once
+        # real pooled-session distributions are seen (see plan doc open items)
+        "degenerate": bool(median_sin < 0.05),
+    }
+
+
 def _excitation_summary(pairs: PairedMotion) -> dict[str, Any]:
     def summarize(values: np.ndarray) -> dict[str, Any]:
         if len(values) < 3:
@@ -1107,6 +1344,10 @@ def _excitation_summary(pairs: PairedMotion) -> dict[str, Any]:
         "radar_velocity": summarize(pairs.radar_velocity_r),
         "camera_velocity": summarize(pairs.camera_velocity_c),
         "camera_angular_velocity": summarize(pairs.camera_omega_c),
+        "noncollinearity_wise_eq20": {
+            "camera_velocity": _pairwise_noncollinearity(pairs.camera_velocity_c),
+            "camera_angular_velocity": _pairwise_noncollinearity(pairs.camera_omega_c),
+        },
     }
 
 
@@ -1339,7 +1580,18 @@ def process_session(session_dir: Path, args: argparse.Namespace) -> tuple[Sessio
             rotations_wc=odom.rotations_wc,
             translations_wc=odom.translations_wc,
         )
-        temporal = choose_temporal_initialization(session_dir, radar, trajectory, args)
+        if args.fixed_time_offset_ms is not None:
+            fixed_offset_us = int(round(float(args.fixed_time_offset_ms) * 1000.0))
+            fixed_overlap = _overlap_sample_count(radar.timestamps_us, trajectory.timestamps_us, fixed_offset_us)
+            radar_step = int(np.median(np.diff(radar.timestamps_us))) if len(radar.timestamps_us) > 1 else 0
+            camera_step = int(np.median(np.diff(trajectory.timestamps_us))) if len(trajectory.timestamps_us) > 1 else 0
+            fixed_sample_period_us = (
+                max(0, min(x for x in [radar_step, camera_step] if x > 0))
+                if (radar_step > 0 or camera_step > 0) else 0
+            )
+            temporal = TemporalInitialization(fixed_offset_us, 1.0, fixed_sample_period_us, fixed_overlap, "fixed_override")
+        else:
+            temporal = choose_temporal_initialization(session_dir, radar, trajectory, args)
         if odom.motion_source == "monocular":
             scale = _estimate_monocular_scale(radar, trajectory, temporal, args)
             odom = _scale_odometry_translations(odom, scale)
@@ -1348,12 +1600,42 @@ def process_session(session_dir: Path, args: argparse.Namespace) -> tuple[Sessio
                 rotations_wc=odom.rotations_wc,
                 translations_wc=odom.translations_wc,
             )
+
+        factory_extrinsics = _cached_factory_extrinsics()
+        imu_gyro_camera, imu_streams_raw, imu_warning = load_imu_gyro_camera_frame(session_dir, factory_extrinsics)
+        if imu_streams_raw is not None:
+            info["imu"] = summarize_imu_streams(imu_streams_raw)
+            if imu_warning is not None:
+                info["imu"]["warning"] = imu_warning
+        else:
+            info["imu"] = {"present": False}
+        omega_source_used, angular_velocity_at = choose_omega_source(args.omega_source, trajectory, imu_gyro_camera)
+        if imu_gyro_camera is not None:
+            info["omega_agreement"] = compute_omega_agreement(trajectory, imu_gyro_camera)
+        if args.omega_source == "imu" and omega_source_used != "imu":
+            # Strict mode: never silently mix IMU-omega and RGB-D-omega
+            # sessions in one pooled least-squares solve -- they have
+            # different noise characteristics, and conflating them without
+            # accounting for it would bias the fit in a way that's hard to
+            # detect after the fact. 'auto' is the lenient mode that allows
+            # this mixing (useful for maximizing sample count during
+            # exploratory work); 'imu' excludes non-IMU sessions instead.
+            info["usable"] = False
+            info["error"] = "no IMU gyro available for this session while --omega-source imu was requested"
+            return None, info
+
+        depth_lookup = build_depth_lookup(session_dir) if bool(args.refine_geometry) else None
+        info["geometry_depth_available"] = depth_lookup is not None
+
         data = SessionMotionData(
             session_name=session_dir.name,
             radar_motion=radar,
             camera_odometry=odom,
             camera_trajectory=trajectory,
             temporal_init=temporal,
+            angular_velocity_at=angular_velocity_at,
+            omega_source=omega_source_used,
+            depth_lookup=depth_lookup,
         )
         info["radar_motion"] = _summarize_radar_motion(radar)
         info["camera_odometry"] = _summarize_odometry(odom)
@@ -1363,6 +1645,7 @@ def process_session(session_dir: Path, args: argparse.Namespace) -> tuple[Sessio
             "overlap_samples": int(temporal.overlap_samples),
             "source": temporal.source,
         }
+        info["omega_source_used"] = omega_source_used
         info["usable"] = True
         return data, info
     except Exception as exc:
@@ -1441,6 +1724,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-offset-ms", type=float, default=2000.0)
     parser.add_argument("--temporal-init", choices=["start", "speed", "blend"], default="start")
     parser.add_argument("--temporal-start-weight", type=float, default=0.85)
+    parser.add_argument(
+        "--fixed-time-offset-ms",
+        type=float,
+        default=None,
+        help=(
+            "Override all algorithmic temporal-offset estimation with this fixed, signed "
+            "offset in milliseconds. Convention: camera_time = radar_time + offset (matches "
+            "gather_pairs' query_us = radar_ts_us + offset_us). When set, every session's "
+            "TemporalInitialization is synthesized from this value (source='fixed_override') "
+            "instead of estimated per-session. Default None preserves existing behavior."
+        ),
+    )
     parser.add_argument("--time-mode", choices=["fixed", "solve"], default="fixed")
     parser.add_argument("--min-motion-speed-mps", type=float, default=0.05)
     parser.add_argument("--max-camera-speed-mps", type=float, default=0.0)
@@ -1455,8 +1750,49 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-nfev", type=int, default=120)
     parser.add_argument("--min-paired-samples", type=int, default=40)
     parser.add_argument("--max-residual-rms-mps", type=float, default=0.45)
+    parser.add_argument(
+        "--omega-source",
+        choices=["auto", "rgbd", "imu"],
+        default="auto",
+        help=(
+            "Source for omega_camera in the v_camera ~= R_cr*v_radar - omega_camera x t_cr "
+            "residual (Wise et al. Eq. 16). 'rgbd' always finite-differences RGB-D odometry "
+            "poses (original MVP behavior). 'auto' prefers IMU gyro when a `<session>_imu.csv` "
+            "and config/d435i_factory_extrinsics.json are both available, else falls back to "
+            "rgbd -- this MIXES omega sources across a pooled multi-session solve, which is "
+            "fine for exploratory work but conflates two different noise models in one "
+            "residual pool. 'imu' is strict: any session without IMU gyro available is marked "
+            "unusable and excluded from the solve entirely, rather than silently falling back. "
+            "Currently only the ds_buildingunknown_2026-07-20 session group has IMU data -- see "
+            "manifests/imu_audit_2026-09-04.md."
+        ),
+    )
     parser.add_argument("--save-pairs", action="store_true")
     parser.add_argument("--verbose", action="store_true")
+
+    parser.add_argument(
+        "--calibration-stage",
+        choices=["velocity", "doppler"],
+        default="velocity",
+        help=(
+            "'velocity' is the original Stage 3 MVP: one RANSAC-fitted velocity per radar "
+            "frame, aggregated across sessions (solve_spatiotemporal). 'doppler' is Stage 4: "
+            "warm-starts from the Stage 3 solve, then refines using every RANSAC-accepted "
+            "radar detection's own Doppler measurement individually (doppler_lever_arm.py) -- "
+            "see docs/IMU_SPATIOTEMPORAL_CALIBRATION_PLAN.md Stage 4."
+        ),
+    )
+    parser.add_argument("--max-doppler-detections", type=int, default=20000, help="Stage 4: subsample cap for pooled per-detection Doppler observations (perf bound).")
+    parser.add_argument("--min-doppler-detections", type=int, default=200, help="Stage 4: minimum pooled detections required, else fall back to the Stage 3 warm start.")
+    parser.add_argument("--doppler-loss-scale-mps", type=float, default=0.3, help="Stage 4 soft_l1 f_scale, in m/s. Higher than --loss-scale-mps by default: per-detection Doppler jitter is noisier than an already-RANSAC-fitted per-frame velocity.")
+
+    parser.add_argument("--refine-geometry", action="store_true", help="Stage 5: after the Doppler solve (only meaningful with --calibration-stage doppler), refine (R,t) further using a radar->depth projective residual (geometry_refinement.py). Time offset is held fixed at the Doppler stage's value.")
+    parser.add_argument("--geometry-max-detections-per-session", type=int, default=40, help="Stage 5: cap correspondences pooled per session (perf bound; also keeps one session from dominating the refinement).")
+    parser.add_argument("--geometry-min-correspondences", type=int, default=100, help="Stage 5: minimum pooled correspondences required, else fall back to the Stage 4 (Doppler) result unchanged.")
+    parser.add_argument("--geometry-loss-scale-m", type=float, default=0.15, help="Stage 5 huber f_scale, in meters (depth residual units).")
+    parser.add_argument("--geometry-max-residual-rms-m", type=float, default=0.5, help="Stage 5: fall back to the Doppler result if the converged depth-residual RMS exceeds this.")
+    parser.add_argument("--geometry-warmstart-rotation-weight", type=float, default=2.0, help="Stage 5: prior weight pulling rotation toward the Stage 4 input -- keeps a noisy/sparse depth correspondence set from dragging the transform far from an already-converged Doppler solution.")
+    parser.add_argument("--geometry-warmstart-translation-weight", type=float, default=8.0, help="Stage 5: prior weight pulling translation toward the Stage 4 input (see --geometry-warmstart-rotation-weight).")
     return parser
 
 
@@ -1478,8 +1814,9 @@ def main() -> int:
         "method": "spatiotemporal_velocity_mvp",
         "sessions": {},
         "paper_basis": {
-            "velocity_residual": "v_camera ~= R_cr * v_radar - omega_camera x t_cr",
-            "mvp_simplification": "finite-difference RGB-D egomotion instead of Lie-group B-splines",
+            "velocity_residual": "v_camera ~= R_cr * v_radar - omega_camera x t_cr (Wise et al. 2021, Eq. 16)",
+            "mvp_simplification": "finite-difference RGB-D egomotion instead of Lie-group B-splines (no continuous-time trajectory, no full SE(3) pose residual)",
+            "omega_source_note": "omega_camera can come from RGB-D-differenced poses or IMU gyro (--omega-source) -- see docs/IMU_SPATIOTEMPORAL_CALIBRATION_PLAN.md",
         },
     }
 
@@ -1492,11 +1829,16 @@ def main() -> int:
             radar_obs = info["radar_motion"]["observable_fraction"]
             odom_valid = info["camera_odometry"]["valid_fraction"]
             temp_ms = info["temporal_init"]["offset_ms"]
+            omega_src = info.get("omega_source_used", "rgbd")
+            agreement = info.get("omega_agreement", {}).get("median_abs_diff_radps")
+            agreement_str = f" omega_agree_radps={agreement:.4f}" if agreement is not None and math.isfinite(agreement) else ""
             print(
                 "[session]"
                 f" usable radar_obs={radar_obs:.3f}"
                 f" odom_valid={odom_valid:.3f}"
-                f" time_offset_ms={temp_ms:.1f}",
+                f" time_offset_ms={temp_ms:.1f}"
+                f" omega_source={omega_src}"
+                f"{agreement_str}",
                 flush=True,
             )
         else:
@@ -1521,23 +1863,66 @@ def main() -> int:
     result_path = args.output_dir / "spatiotemporal_radar_camera_extrinsics.json"
     diag_path = args.output_dir / "spatiotemporal_diagnostics.json"
     _write_json(result_path, result)
-    _write_json(diag_path, diagnostics)
 
     if args.save_pairs:
         offset_us = int(round(float(result["time_offset_ms"]) * 1000.0))
         pairs = gather_pairs(usable_data, offset_us, min_speed_mps=args.min_motion_speed_mps, **_pair_filter_kwargs(args))
         save_pairs_csv(args.output_dir / "spatiotemporal_motion_pairs.csv", pairs)
 
-    print(f"[done] result={result_path}", flush=True)
-    print(f"[done] diagnostics={diag_path}", flush=True)
+    print(f"[done] stage3_velocity result={result_path}", flush=True)
     print(
-        "[done]"
+        "[done] stage3_velocity"
         f" paired={result['paired_motion_samples']}"
         f" residual_rms_mps={result['residual_rms_mps']:.4f}"
         f" time_offset_ms={result['time_offset_ms']:.1f}"
         f" fallback={result['fallback']['use_static']}:{result['fallback']['reason']}",
         flush=True,
     )
+
+    final_result = result
+    if args.calibration_stage == "doppler":
+        doppler_result = solve_doppler_lever_arm(usable_data, static_prior, result, args)
+        diagnostics["solve_stage4_doppler"] = {
+            "n_detections_pooled": doppler_result["n_detections_pooled"],
+            "residual_rms_mps": doppler_result["residual_rms_mps"],
+            "fallback": doppler_result["fallback"],
+        }
+        doppler_path = args.output_dir / "doppler_lever_arm_radar_camera_extrinsics.json"
+        _write_json(doppler_path, doppler_result)
+        print(f"[done] stage4_doppler result={doppler_path}", flush=True)
+        print(
+            "[done] stage4_doppler"
+            f" pooled={doppler_result['n_detections_pooled']}"
+            f" residual_rms_mps={doppler_result['residual_rms_mps']:.4f}"
+            f" fallback={doppler_result['fallback']['use_warm_start']}:{doppler_result['fallback']['reason']}",
+            flush=True,
+        )
+        final_result = doppler_result
+
+        if args.refine_geometry:
+            geometry_result = refine_with_geometry(usable_data, doppler_result, args)
+            diagnostics["solve_stage5_geometry"] = {
+                "n_correspondences": geometry_result["n_correspondences"],
+                "residual_rms_m": geometry_result["residual_rms_m"],
+                "fallback": geometry_result["fallback"],
+            }
+            geometry_path = args.output_dir / "geometry_refined_radar_camera_extrinsics.json"
+            _write_json(geometry_path, geometry_result)
+            print(f"[done] stage5_geometry result={geometry_path}", flush=True)
+            print(
+                "[done] stage5_geometry"
+                f" correspondences={geometry_result['n_correspondences']}"
+                f" residual_rms_m={geometry_result['residual_rms_m']:.4f}"
+                f" fallback={geometry_result['fallback']['use_doppler_input']}:{geometry_result['fallback']['reason']}",
+                flush=True,
+            )
+            final_result = geometry_result
+
+    diagnostics["final"] = {"method": final_result["method"], "R_radar_to_camera": final_result["R_radar_to_camera"], "t_radar_to_camera": final_result["t_radar_to_camera"], "time_offset_ms": final_result["time_offset_ms"]}
+    _write_json(diag_path, diagnostics)
+    _write_json(args.output_dir / "final_radar_camera_extrinsics.json", final_result)
+    print(f"[done] diagnostics={diag_path}", flush=True)
+    print(f"[done] final method={final_result['method']}", flush=True)
     return 0
 
 

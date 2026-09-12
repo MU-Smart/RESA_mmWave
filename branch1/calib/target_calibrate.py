@@ -91,6 +91,28 @@ class TagObservation:
     reflector_camera_xyz: np.ndarray
 
 
+# ---------------------------------------------------------------------------
+# Pose-flip rejection: the target rig is static within a session, so the
+# tag's true orientation should barely move frame-to-frame. pupil_apriltags'
+# monocular PnP solve has a well-known planar pose ambiguity for near-head-on
+# square tags ("more than one new minima found") -- it silently picks one of
+# two geometrically distinct branches per frame, which shows up as a sudden
+# large jump in pose_R relative to neighboring frames even though the tag
+# never moved. Reject any frame whose orientation jumps too far from the
+# last-accepted frame's orientation; a rejected frame doesn't overwrite the
+# reference, so isolated flips don't cascade into rejecting good frames that
+# follow. (Depth-based pose verification was tried first -- see
+# DEPTH_TAG_POSE_PLAN.md -- but the depth sensor doesn't return usable range
+# data at the tag's own surface on this hardware/target, so it never
+# resolves the ambiguity in practice; dropped in favor of this approach.)
+# ---------------------------------------------------------------------------
+
+
+def _pose_angular_diff_deg(rotation_a: np.ndarray, rotation_b: np.ndarray) -> float:
+    relative = rotation_a @ rotation_b.T
+    return float(np.degrees(Rotation.from_matrix(relative).magnitude()))
+
+
 def _camera_intrinsics_from_meta(session_dir: Path) -> tuple[float, float, float, float]:
     meta = _read_json(session_dir / "meta_data.json")
     rgb = meta["realsense_calibration"]["rgb"]
@@ -106,7 +128,9 @@ def detect_tag_observations(
     reflector_offset_m: float,
     min_decision_margin: float,
     tag_id: int | None,
-) -> dict[int, TagObservation]:
+    max_pose_flip_deg: float = 20.0,
+) -> tuple[dict[int, TagObservation], int]:
+    """Returns (observations, n_flip_rejected)."""
     from pupil_apriltags import Detector  # local import: optional heavy dep
 
     fx, fy, cx, cy = _camera_intrinsics_from_meta(session_dir)
@@ -123,8 +147,11 @@ def detect_tag_observations(
     observations: dict[int, TagObservation] = {}
     if not wanted_video_indices:
         cap.release()
-        return observations
+        return observations, 0
     last_wanted = max(wanted_video_indices)
+
+    last_accepted_rotation: np.ndarray | None = None
+    n_flip_rejected = 0
 
     frame_idx = 0
     while frame_idx <= last_wanted:
@@ -140,20 +167,29 @@ def detect_tag_observations(
             candidates = [r for r in candidates if r.decision_margin >= min_decision_margin]
             if candidates:
                 best = max(candidates, key=lambda r: r.decision_margin)
-                # Tag +Z (pose_R[:, 2]) points away from the camera, into the
-                # mount -- verified empirically: camera-in-tag-frame z < 0.
-                # The trihedral reflector sits recessed behind the printed
-                # face along that same direction.
-                reflector = best.pose_t.reshape(3) + reflector_offset_m * best.pose_R[:, 2]
-                observations[frame_idx] = TagObservation(
-                    video_frame_index=frame_idx,
-                    tag_id=int(best.tag_id),
-                    decision_margin=float(best.decision_margin),
-                    reflector_camera_xyz=reflector,
+
+                is_flip = (
+                    last_accepted_rotation is not None
+                    and _pose_angular_diff_deg(best.pose_R, last_accepted_rotation) > max_pose_flip_deg
                 )
+                if is_flip:
+                    n_flip_rejected += 1
+                else:
+                    last_accepted_rotation = best.pose_R
+                    # Tag +Z (pose_R[:, 2]) points away from the camera, into
+                    # the mount -- verified empirically: camera-in-tag-frame
+                    # z < 0. The trihedral reflector sits recessed behind the
+                    # printed face along that same direction.
+                    reflector = best.pose_t.reshape(3) + reflector_offset_m * best.pose_R[:, 2]
+                    observations[frame_idx] = TagObservation(
+                        video_frame_index=frame_idx,
+                        tag_id=int(best.tag_id),
+                        decision_margin=float(best.decision_margin),
+                        reflector_camera_xyz=reflector,
+                    )
         frame_idx += 1
     cap.release()
-    return observations
+    return observations, n_flip_rejected
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +241,7 @@ def gather_session_correspondences(
             radar_to_video_idx[f.frame_num] = best_i
 
     wanted = set(radar_to_video_idx.values())
-    observations = detect_tag_observations(
+    observations, n_flip_rejected = detect_tag_observations(
         session_dir,
         wanted,
         tag_family=args.tag_family,
@@ -213,9 +249,11 @@ def gather_session_correspondences(
         reflector_offset_m=args.reflector_offset_m,
         min_decision_margin=args.min_decision_margin,
         tag_id=args.tag_id,
+        max_pose_flip_deg=args.max_pose_flip_deg,
     )
     info["video_frames_checked"] = len(wanted)
     info["tag_observations"] = len(observations)
+    info["pose_flip_rejected"] = n_flip_rejected
 
     radar_by_frame = {f.frame_num: f for f in radar_frames}
     correspondences: list[Correspondence] = []
@@ -287,14 +325,28 @@ def solve_target_calibration(
     rot_prior = static_prior.rotation
     trans_prior = static_prior.translation_m
 
+    # Refine against the RANSAC inlier subset only, not all correspondences.
+    # With this dataset's ~40-50% outlier rate, including outliers in the
+    # soft_l1 objective (even down-weighted) was pulling the refined fit
+    # away from a RANSAC solution that already clears the acceptance
+    # thresholds on its own -- refinement should tighten the inlier fit and
+    # blend it with the prior, not re-fight the outliers RANSAC already
+    # rejected.
+    if n_inliers >= 3:
+        refine_radar_pts = radar_pts[ransac_mask]
+        refine_camera_pts = camera_pts[ransac_mask]
+    else:
+        refine_radar_pts = radar_pts
+        refine_camera_pts = camera_pts
+
     def objective(vector: np.ndarray) -> np.ndarray:
         rotation = Rotation.from_rotvec(vector[:3]).as_matrix()
         translation = vector[3:6]
-        if n_total == 0:
+        if len(refine_radar_pts) == 0:
             residuals = np.array([1000.0], dtype=np.float64)
         else:
-            predicted = radar_pts @ rotation.T + translation
-            residuals = (camera_pts - predicted).reshape(-1)
+            predicted = refine_radar_pts @ rotation.T + translation
+            residuals = (refine_camera_pts - predicted).reshape(-1)
         if static_prior.loaded and args.rotation_prior_weight > 0.0:
             rot_delta = Rotation.from_matrix(rotation @ rot_prior.T).as_rotvec()
             residuals = np.concatenate([residuals, float(args.rotation_prior_weight) * rot_delta])
@@ -436,6 +488,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-correspondences", type=int, default=30)
     parser.add_argument("--max-inlier-rms-m", type=float, default=0.15)
     parser.add_argument("--save-correspondences", action="store_true")
+    parser.add_argument(
+        "--max-pose-flip-deg", type=float, default=20.0,
+        help=(
+            "Reject a frame's monocular AprilTag pose if its orientation "
+            "jumps more than this many degrees from the last-accepted "
+            "frame's orientation (the rig is static, so this should only "
+            "trip on the planar pose ambiguity's discrete branch flips, "
+            "not real motion)."
+        ),
+    )
     return parser
 
 

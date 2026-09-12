@@ -201,6 +201,8 @@ def _add_frame_doppler_stats(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _add_soft_structural(df: pd.DataFrame, *, window_size: int = WINDOW_SIZE) -> pd.DataFrame:
+    from branch1.inputs.geometry.corridor_soft_structural import process_frame_group
+
     out = df.copy()
     soft_cols = [
         "z_above_floor", "corridor_margin", "wall_anomaly",

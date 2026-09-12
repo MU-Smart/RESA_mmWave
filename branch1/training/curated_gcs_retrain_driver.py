@@ -88,7 +88,7 @@ class Config:
 
     @property
     def gcs_code_src(self) -> str:
-        return f"{self.gcs_root_uri}/code/canon"
+        return f"{self.gcs_root_uri}/code_v2/RESA_mmWave"
 
     @property
     def gcs_catalog_uri(self) -> str:
@@ -354,8 +354,8 @@ def _dataset_suffix(groups: tuple[str, ...] | list[str]) -> str:
 
 
 def resolve_paths(cfg: Config) -> Paths:
-    # code_root is synced from CapstoneData/code/canon and is the RESA_mmWave repo
-    # root: branch1/, branch2/, branch3/, config/ live directly under it.
+    # code_root is synced from CapstoneData/code_v2/RESA_mmWave and is the RESA_mmWave
+    # repo root: branch1/, branch2/, branch3/, config/ live directly under it.
     code = cfg.code_root
     branch1 = code / "branch1"
     config_dir = code / "config"

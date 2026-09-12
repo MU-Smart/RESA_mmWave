@@ -40,7 +40,7 @@ import numpy as np
 # ============================================================================
 
 THIS_DIR     = Path(__file__).resolve().parent
-REPO_ROOT    = THIS_DIR.parents[2]
+REPO_ROOT    = THIS_DIR.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -76,14 +76,11 @@ def _radar_cfg_path() -> Path:
         candidates.append(Path(env_cfg))
     candidates.extend(
         [
-            # Running from LLM_ML/prepare_autolabel.py.
+            # Running from the RESA_mmWave repo root (branch1/processing/prepare_autolabel.py).
             REPO_ROOT / "config" / "profile_objdet.cfg",
-            # Running from /content/work/code/prepare_autolabel.py.
-            THIS_DIR / "canon" / "config" / "profile_objdet.cfg",
-            # Running from canon/processing/prepare_autolabel.py.
-            THIS_DIR.parent / "config" / "profile_objdet.cfg",
-            # Local checkout fallback when launched from notebooks.
-            Path("/content/work/code/canon/config/profile_objdet.cfg"),
+            # Local checkout fallback when launched from notebooks synced to
+            # CapstoneData/code_v2/RESA_mmWave (repo root synced flat, no nesting).
+            Path("/content/work/code/config/profile_objdet.cfg"),
         ]
     )
     return _first_existing_path(candidates, candidates[0])

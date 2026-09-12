@@ -1,6 +1,12 @@
 .aider*
+.claude
+.pytest_cache
 .venv
 .lh
+.harness
+.agents
+docs/
 data/
 mariam/
 __pycache__/
+paper/
